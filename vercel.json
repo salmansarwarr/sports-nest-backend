@@ -8,6 +8,13 @@
     ],
     "routes": [
         {
+            "src": "/api-docs/swagger-ui.*",
+            "headers": {
+                "Content-Type": "text/css"
+            },
+            "dest": "/api/index.js"
+        },
+        {
             "src": "/(.*)",
             "dest": "/api/index.js"
         }
