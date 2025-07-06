@@ -49,7 +49,7 @@ app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/api-docs/swagger-assets', express.static(pathToSwaggerUi))
+app.use('/api-docs/swagger-assets', express.static('../public/swagger-assets'));
 
 // Swagger configuration
 const swaggerOptions = {
