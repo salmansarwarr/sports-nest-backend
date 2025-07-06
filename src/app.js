@@ -9,8 +9,6 @@ const connectDB = require('./config/database.js');
 const authRoutes = require('./routes/authRoutes.js');
 const errorHandler = require('./middleware/errorHandler.js');
 
-const pathToSwaggerUi = require('swagger-ui-dist').absolutePath()
-
 const passport = require('passport');
 require('./config/passport'); // load strategy
 
@@ -49,8 +47,6 @@ app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/api-docs/swagger-assets', express.static('../public/swagger-assets'));
-
 // Swagger configuration
 const swaggerOptions = {
     definition: {
@@ -69,7 +65,7 @@ const swaggerOptions = {
             {
                 url:
                     process.env.NODE_ENV === "production"
-                        ? "https://sports-nest-backend-ifpj.vercel.app"
+                        ? "https://api.courtbooking.com"
                         : `http://localhost:${process.env.PORT || 3000}`,
                 description:
                     process.env.NODE_ENV === "production"
@@ -100,12 +96,8 @@ app.use(
     "/api-docs",
     swaggerUi.serve,
     swaggerUi.setup(swaggerSpec, {
-        // We'll use customCssUrl and customJs to point to our *own* served assets
-        customCssUrl: '/api-docs/swagger-assets/swagger-ui.css',
-        customJs: '/api-docs/swagger-assets/swagger-ui-bundle.js',
-        customJsStr: '/api-docs/swagger-assets/swagger-ui-standalone-preset.js', // Also include the preset if you use it
-        // Ensure you include any other JS files swagger-ui-express might load by default
-        // based on its source code or common usage.
+        customCss: ".swagger-ui .topbar { display: none }",
+        customSiteTitle: "Court Booking API Documentation",
     })
 );
 
