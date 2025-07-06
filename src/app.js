@@ -49,7 +49,7 @@ app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use(express.static(pathToSwaggerUi))
+app.use('/api-docs/swagger-assets', express.static(pathToSwaggerUi))
 
 // Swagger configuration
 const swaggerOptions = {
@@ -100,7 +100,12 @@ app.use(
     "/api-docs",
     swaggerUi.serve,
     swaggerUi.setup(swaggerSpec, {
-        // customCssUrl: "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui.min.css",
+        // We'll use customCssUrl and customJs to point to our *own* served assets
+        customCssUrl: '/api-docs/swagger-assets/swagger-ui.css',
+        customJs: '/api-docs/swagger-assets/swagger-ui-bundle.js',
+        customJsStr: '/api-docs/swagger-assets/swagger-ui-standalone-preset.js', // Also include the preset if you use it
+        // Ensure you include any other JS files swagger-ui-express might load by default
+        // based on its source code or common usage.
     })
 );
 
