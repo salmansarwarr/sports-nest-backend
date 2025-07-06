@@ -9,6 +9,8 @@ const connectDB = require('./config/database.js');
 const authRoutes = require('./routes/authRoutes.js');
 const errorHandler = require('./middleware/errorHandler.js');
 
+const pathToSwaggerUi = require('swagger-ui-dist').absolutePath()
+
 const passport = require('passport');
 require('./config/passport'); // load strategy
 
@@ -46,6 +48,8 @@ app.use(globalLimiter);
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use(express.static(pathToSwaggerUi))
 
 // Swagger configuration
 const swaggerOptions = {
