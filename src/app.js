@@ -96,7 +96,19 @@ app.use(
     "/api-docs",
     swaggerUi.serve,
     swaggerUi.setup(swaggerSpec, {
-        customCssUrl: 'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui.min.css',
+        customCss: '',
+        customCssUrl: 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@4.15.5/swagger-ui.css',
+        customJs: [
+          'https://cdn.jsdelivr.net/npm/swagger-ui-dist@4.15.5/swagger-ui-bundle.js',
+          'https://cdn.jsdelivr.net/npm/swagger-ui-dist@4.15.5/swagger-ui-standalone-preset.js'
+        ],
+        swaggerOptions: {
+          dom_id: '#swagger-ui',
+          presets: [
+            'SwaggerUIBundle.presets.apis',
+            'SwaggerUIStandalonePreset'
+          ]
+        }
     })
 );
 
