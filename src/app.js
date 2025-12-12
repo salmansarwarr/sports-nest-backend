@@ -69,7 +69,7 @@ const swaggerOptions = {
             {
                 url:
                     process.env.NODE_ENV === "production"
-                        ? "https://api.courtbooking.com"
+                        ? "https://sports-nest-backend.vercel.app/"
                         : `http://localhost:${process.env.PORT || 3000}`,
                 description:
                     process.env.NODE_ENV === "production"
