@@ -107,7 +107,7 @@ app.use(
     swaggerUi.setup(swaggerSpec, {
         customCss: ".swagger-ui .topbar { display: none }",
         customSiteTitle: "Court Booking API Documentation",
-        customCssUrl: "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui.min.css",
+        customCssUrl: "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui.min.css",
     })
 );
 
