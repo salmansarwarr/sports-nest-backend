@@ -82,12 +82,12 @@ class AuthController {
 
             if (!user.password || user.password === '') {
                 return res.status(400).json({
-                  success: false,
-                  message: "This account is registered with Google. Please login via Google.",
+                    success: false,
+                    message: "This account is registered with Google. Please login via Google.",
                 });
             }
 
-            if(!user.isEmailVerified) {
+            if (!user.isEmailVerified) {
                 return res.status(401).json({
                     success: false,
                     message: "Please verify your email",
@@ -282,7 +282,7 @@ class AuthController {
             const isCurrentPasswordValid = await user.comparePassword(
                 currentPassword
             );
-            
+
             if (!isCurrentPasswordValid) {
                 return res.status(400).json({
                     success: false,

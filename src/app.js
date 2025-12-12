@@ -7,6 +7,8 @@ const swaggerUi = require('swagger-ui-express');
 
 const connectDB = require('./config/database.js');
 const authRoutes = require('./routes/authRoutes.js');
+const venueRoutes = require('./routes/venueRoutes');
+const courtRoutes = require('./routes/courtRoutes');
 const errorHandler = require('./middleware/errorHandler.js');
 
 const passport = require('passport');
@@ -18,7 +20,9 @@ const app = express();
 app.use(passport.initialize());
 
 // Connect to database
-connectDB();
+if (process.env.NODE_ENV !== 'test') {
+    connectDB();
+}
 
 // Security middleware
 app.use(helmet());
@@ -76,15 +80,20 @@ const swaggerOptions = {
         components:
             process.env.NODE_ENV === "production"
                 ? {
-                      securitySchemes: {
-                          bearerAuth: {
-                              type: "http",
-                              scheme: "bearer",
-                              bearerFormat: "JWT",
-                          },
-                      },
-                  }
+                    securitySchemes: {
+                        bearerAuth: {
+                            type: "http",
+                            scheme: "bearer",
+                            bearerFormat: "JWT",
+                        },
+                    },
+                }
                 : {},
+        tags: [
+            { name: 'Auth', description: 'Authentication endpoints' },
+            { name: 'Venues', description: 'Venue management endpoints' },
+            { name: 'Courts', description: 'Court management endpoints' }
+        ]
     },
     apis: ["./src/routes/*.js"],
 };
@@ -117,6 +126,8 @@ app.get("/", (req, res) => {
 
 // API routes
 app.use("/api/auth", authRoutes);
+app.use('/api/venues', venueRoutes);
+app.use('/api/courts', courtRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

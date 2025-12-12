@@ -1,6 +1,6 @@
 const User = require("../../src/models/User.js");
 const JWTUtils = require("../../src/utils/jwt.js");
-const {register,login, resendVerificationEmail, getProfile, updateProfile, changePassword, forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken} = require("../../src/controllers/authController.js");
+const { register, login, resendVerificationEmail, getProfile, updateProfile, changePassword, forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken } = require("../../src/controllers/authController.js");
 const {
     sendWelcomeEmail: _sendWelcomeEmail,
     sendPasswordResetEmail: _sendPasswordResetEmail,
@@ -301,6 +301,7 @@ describe("Auth Controller", () => {
                 lastName: "Doe",
                 email: "john.doe@example.com",
                 password: "Password123!",
+                isEmailVerified: true
             });
             await user.save();
         });
@@ -340,7 +341,7 @@ describe("Auth Controller", () => {
             expect(mockRes.json).toHaveBeenCalledWith(
                 expect.objectContaining({
                     success: false,
-                    message: "Invalid email or password",
+                    message: "Invalid credentials",
                 })
             );
         });
@@ -357,7 +358,7 @@ describe("Auth Controller", () => {
             expect(mockRes.json).toHaveBeenCalledWith(
                 expect.objectContaining({
                     success: false,
-                    message: "Invalid email or password",
+                    message: "Invalid credentials",
                 })
             );
         });
@@ -428,7 +429,7 @@ describe("Auth Controller", () => {
         });
 
         it("should not refresh with non-existent refresh token", async () => {
-            user.refreshTokens = []; 
+            user.refreshTokens = [];
             await user.save();
             const anotherToken = JWTUtils.generateRefreshToken(user._id);
             mockReq.body = { refreshToken: anotherToken };

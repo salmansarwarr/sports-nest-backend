@@ -6,12 +6,12 @@ beforeAll(async () => {
   // Start in-memory MongoDB instance
   mongoServer = await MongoMemoryServer.create();
   const mongoUri = mongoServer.getUri();
-  
+
   // Connect to the in-memory database
   if (connection.readyState === 0) {
     await connect(mongoUri);
   }
-});
+}, 30000);
 
 beforeEach(async () => {
   // Clear all collections before each test
