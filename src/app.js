@@ -9,6 +9,7 @@ const connectDB = require('./config/database.js');
 const authRoutes = require('./routes/authRoutes.js');
 const venueRoutes = require('./routes/venueRoutes');
 const courtRoutes = require('./routes/courtRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
 const errorHandler = require('./middleware/errorHandler.js');
 
 const passport = require('passport');
@@ -28,7 +29,7 @@ if (process.env.NODE_ENV !== 'test') {
 app.use(helmet());
 app.use(
     cors({
-        origin: process.env.FRONTEND_URL || "http://localhost:3000",
+        origin: "*",  // allow all origins
         credentials: true,
     })
 );
@@ -92,7 +93,8 @@ const swaggerOptions = {
         tags: [
             { name: 'Auth', description: 'Authentication endpoints' },
             { name: 'Venues', description: 'Venue management endpoints' },
-            { name: 'Courts', description: 'Court management endpoints' }
+            { name: 'Courts', description: 'Court management endpoints' },
+            { name: 'Bookings', description: 'Booking management endpoints' }
         ]
     },
     apis: ["./src/routes/*.js"],
@@ -129,6 +131,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use('/api/venues', venueRoutes);
 app.use('/api/courts', courtRoutes);
+app.use('/api/bookings', bookingRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

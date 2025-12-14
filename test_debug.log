@@ -1,6 +1,0 @@
-Venue creation response status: 201
-Nearby venues response: {
-  "success": true,
-  "count": 0,
-  "data": []
-}
