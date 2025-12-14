@@ -25,7 +25,6 @@ const addressSchema = new mongoose.Schema({
 }, { _id: false });
 
 // Location Sub-Schema with GeoJSON
-// Location Sub-Schema with GeoJSON
 const locationSchema = new mongoose.Schema({
     type: {
         type: String,

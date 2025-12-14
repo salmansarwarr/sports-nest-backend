@@ -49,7 +49,7 @@ const {
  *               type: string
  *             postalCode:
  *               type: string
- *         location:
+*         location:
  *           type: object
  *           properties:
  *             type:
@@ -60,6 +60,9 @@ const {
  *               items:
  *                 type: number
  *               description: [longitude, latitude]
+ *             googleMapsUrl:
+ *               type: string
+ *               description: Google Maps URL for the venue location
  *         contact:
  *           type: object
  *           properties:
