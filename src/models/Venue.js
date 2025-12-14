@@ -25,6 +25,7 @@ const addressSchema = new mongoose.Schema({
 }, { _id: false });
 
 // Location Sub-Schema with GeoJSON
+// Location Sub-Schema with GeoJSON
 const locationSchema = new mongoose.Schema({
     type: {
         type: String,
@@ -43,6 +44,21 @@ const locationSchema = new mongoose.Schema({
                     coords[1] >= -90 && coords[1] <= 90;
             },
             message: 'Invalid coordinates format'
+        }
+    },
+    googleMapsUrl: {
+        type: String,
+        trim: true,
+        validate: {
+            validator: function(url) {
+                if (!url) return true; // Optional field
+                // Validate Google Maps URL format
+                return /^https:\/\/(www\.)?google\.com\/maps/.test(url) || 
+                       /^https:\/\/maps\.google\.com/.test(url) ||
+                       /^https:\/\/goo\.gl\/maps/.test(url) ||
+                       /^https:\/\/maps\.app\.goo\.gl/.test(url);
+            },
+            message: 'Invalid Google Maps URL format'
         }
     },
 }, { _id: false });

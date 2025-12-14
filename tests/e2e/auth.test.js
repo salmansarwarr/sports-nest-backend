@@ -12,7 +12,7 @@ describe('Authentication Routes E2E Tests', () => {
     const validUserData = {
         firstName: 'John',
         lastName: 'Doe',
-        email: 'rdxgo70@gmail.com',
+        email: 'john70@gmail.com',
         password: 'Password123!',
         confirmPassword: 'Password123!',
         phone: '+1234567890',
@@ -21,7 +21,7 @@ describe('Authentication Routes E2E Tests', () => {
     };
 
     const loginData = {
-        email: 'rdxgo70@gmail.com',
+        email: 'john70@gmail.com',
         password: 'Password123!'
     };
 
