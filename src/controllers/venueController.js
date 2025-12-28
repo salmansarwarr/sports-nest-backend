@@ -128,7 +128,7 @@ exports.getVenues = async (req, res, next) => {
 
         // Execute query
         const venues = await Venue.find(query)
-            .populate('owner', 'firstName lastName email')
+            .populate('owner', 'firstName lastName email profilePicture')
             .select('-verification.documents')
             .sort(sortBy)
             .skip(skip)
@@ -388,7 +388,7 @@ exports.addMedia = async (req, res, next) => {
         // Check authorization
         const isAuthorized =
             venue.owner.toString() === req.user._id.toString() ||
-            venue.managers.some(m => m.toString() === req.user._id.toString()) ||
+            (venue.managers && venue.managers.some(m => m.toString() === req.user._id.toString())) ||
             req.user.role === 'admin';
 
         if (!isAuthorized) {
@@ -398,23 +398,73 @@ exports.addMedia = async (req, res, next) => {
             });
         }
 
-        const mediaData = req.body;
-
-        // If this is the first media or marked as primary, set as primary
-        if (venue.media.length === 0 || req.body.isPrimary) {
-            venue.media.forEach(m => m.isPrimary = false);
-            mediaData.isPrimary = true;
+        // Support both single media object and array of media
+        const mediaArray = Array.isArray(req.body) ? req.body : [req.body];
+        
+        if (!venue.media) {
+            venue.media = [];
         }
 
-        venue.media.push(mediaData);
+        const startOrder = venue.media.length;
+        const addedMedia = [];
+        let primaryFoundInBatch = false;
+
+        // First pass: check if any media in the batch is marked as primary
+        for (const mediaItem of mediaArray) {
+            if (mediaItem.isPrimary === true) {
+                primaryFoundInBatch = true;
+                break;
+            }
+        }
+
+        // If any media is marked as primary or this is the first media, set all existing media to non-primary
+        if (primaryFoundInBatch || venue.media.length === 0) {
+            for (let i = 0; i < venue.media.length; i++) {
+                venue.media[i].isPrimary = false;
+            }
+        }
+
+        // Process each media item
+        for (let idx = 0; idx < mediaArray.length; idx++) {
+            const mediaItem = mediaArray[idx];
+            
+            const mediaData = {
+                type: mediaItem.type,
+                url: mediaItem.url,
+                altText: mediaItem.altText || '',
+                isPrimary: false,
+                order: mediaItem.order !== undefined ? mediaItem.order : (startOrder + idx)
+            };
+
+            // Add optional fields if provided
+            if (mediaItem.publicId) {
+                mediaData.publicId = mediaItem.publicId;
+            }
+            if (mediaItem.thumbnail) {
+                mediaData.thumbnail = mediaItem.thumbnail;
+            }
+
+            // Set as primary if:
+            // 1. This is the first media ever (venue.media.length was 0 before adding)
+            // 2. This item is explicitly marked as primary
+            if ((startOrder === 0 && idx === 0) || mediaItem.isPrimary === true) {
+                mediaData.isPrimary = true;
+            }
+
+            venue.media.push(mediaData);
+            addedMedia.push(venue.media[venue.media.length - 1]);
+        }
+
         await venue.save();
 
         res.status(200).json({
             success: true,
-            message: 'Media added successfully',
-            data: venue.media[venue.media.length - 1]
+            message: addedMedia.length === 1 ? 'Media added successfully' : `${addedMedia.length} media items added successfully`,
+            data: addedMedia.length === 1 ? addedMedia[0] : addedMedia,
+            count: addedMedia.length
         });
     } catch (error) {
+        console.error('Error adding media to venue:', error);
         next(error);
     }
 };
@@ -438,7 +488,7 @@ exports.deleteMedia = async (req, res, next) => {
         // Check authorization
         const isAuthorized =
             venue.owner.toString() === req.user._id.toString() ||
-            venue.managers.some(m => m.toString() === req.user._id.toString()) ||
+            (venue.managers && venue.managers.some(m => m.toString() === req.user._id.toString())) ||
             req.user.role === 'admin';
 
         if (!isAuthorized) {
@@ -448,7 +498,14 @@ exports.deleteMedia = async (req, res, next) => {
             });
         }
 
-        const mediaIndex = venue.media.findIndex(m => m._id.toString() === req.params.mediaId);
+        if (!venue.media || !Array.isArray(venue.media)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Media not found'
+            });
+        }
+
+        const mediaIndex = venue.media.findIndex(m => m._id && m._id.toString() === req.params.mediaId);
 
         if (mediaIndex === -1) {
             return res.status(404).json({
@@ -458,8 +515,18 @@ exports.deleteMedia = async (req, res, next) => {
         }
 
         const wasPrimary = venue.media[mediaIndex].isPrimary;
+        const publicId = venue.media[mediaIndex].publicId;
 
-        // TODO: Delete from Cloudinary if publicId exists
+        // Delete from Cloudinary if publicId exists
+        if (publicId) {
+            try {
+                const { deleteFromCloudinary } = require('../utils/cloudinary');
+                await deleteFromCloudinary(publicId);
+            } catch (cloudinaryError) {
+                console.error('Failed to delete from Cloudinary:', cloudinaryError);
+                // Continue with database deletion even if Cloudinary deletion fails
+            }
+        }
 
         venue.media.splice(mediaIndex, 1);
 

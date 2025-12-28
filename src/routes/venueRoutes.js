@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const venueController = require('../controllers/venueController');
 const courtController = require('../controllers/courtController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, optionalAuthenticate } = require('../middleware/auth');
 const {
     createVenueValidation,
     updateVenueValidation,
     venueMediaValidation,
+    venueMediaBulkValidation,
     venueStatusValidation,
     getVenuesQueryValidation,
     mongoIdValidation,
@@ -267,6 +268,7 @@ router.get(
  */
 router.get(
     '/:id',
+    optionalAuthenticate,
     venueController.getVenue
 );
 
@@ -380,7 +382,7 @@ router.post(
     authenticate,
     authorize('owner', 'manager', 'admin'),
     mongoIdValidation,
-    venueMediaValidation,
+    venueMediaBulkValidation,
     venueController.addMedia
 );
 

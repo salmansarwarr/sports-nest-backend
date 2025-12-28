@@ -32,8 +32,13 @@ const {
 
 const router = express.Router();
 
-// Rate limiting
-const authLimiter = rateLimit({
+// Rate limiting (disabled in development)
+const isDevelopment = process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMIT === 'true';
+
+// Bypass middleware for development
+const bypassLimiter = (req, res, next) => next();
+
+const authLimiter = isDevelopment ? bypassLimiter : rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 5, // 5 attempts per window
     message: {
@@ -44,7 +49,7 @@ const authLimiter = rateLimit({
     legacyHeaders: false,
 });
 
-const generalLimiter = rateLimit({
+const generalLimiter = isDevelopment ? bypassLimiter : rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // 100 requests per window
     message: {

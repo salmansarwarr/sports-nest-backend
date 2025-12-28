@@ -107,6 +107,65 @@ exports.venueMediaValidation = [
         .isBoolean(),
 ];
 
+// Custom validation middleware for bulk media (array) or single media
+exports.venueMediaBulkValidation = (req, res, next) => {
+    const mediaArray = Array.isArray(req.body) ? req.body : [req.body];
+    const errors = [];
+
+    mediaArray.forEach((media, index) => {
+        if (!media.type || !['image', 'video', 'virtual-tour'].includes(media.type)) {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].type` : 'type',
+                msg: 'Media type is required and must be one of: image, video, virtual-tour',
+                value: media.type
+            });
+        }
+
+        if (!media.url) {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].url` : 'url',
+                msg: 'Media URL is required',
+                value: media.url
+            });
+        } else {
+            try {
+                new URL(media.url);
+            } catch (e) {
+                errors.push({
+                    param: Array.isArray(req.body) ? `[${index}].url` : 'url',
+                    msg: 'Valid URL is required',
+                    value: media.url
+                });
+            }
+        }
+
+        if (media.altText !== undefined && typeof media.altText !== 'string') {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].altText` : 'altText',
+                msg: 'Alt text must be a string',
+                value: media.altText
+            });
+        }
+
+        if (media.isPrimary !== undefined && typeof media.isPrimary !== 'boolean') {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].isPrimary` : 'isPrimary',
+                msg: 'isPrimary must be a boolean',
+                value: media.isPrimary
+            });
+        }
+    });
+
+    if (errors.length > 0) {
+        return res.status(400).json({
+            success: false,
+            errors: errors
+        });
+    }
+
+    next();
+};
+
 exports.venueStatusValidation = [
     body('status')
         .notEmpty().withMessage('Status is required')
@@ -247,6 +306,66 @@ exports.courtMediaValidation = [
         .optional()
         .isBoolean(),
 ];
+
+// Bulk media validation for courts (supports array of media)
+exports.courtMediaBulkValidation = (req, res, next) => {
+    const mediaArray = Array.isArray(req.body) ? req.body : [req.body];
+    const errors = [];
+
+    mediaArray.forEach((media, index) => {
+        if (!media.type || !['image', 'video', 'virtual-tour'].includes(media.type)) {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].type` : 'type',
+                msg: 'Media type is required and must be one of: image, video, virtual-tour',
+                value: media.type
+            });
+        }
+
+        if (!media.url) {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].url` : 'url',
+                msg: 'Media URL is required',
+                value: media.url
+            });
+        } else {
+            try {
+                new URL(media.url);
+            } catch (e) {
+                errors.push({
+                    param: Array.isArray(req.body) ? `[${index}].url` : 'url',
+                    msg: 'Valid URL is required',
+                    value: media.url
+                });
+            }
+        }
+
+        if (media.altText !== undefined && typeof media.altText !== 'string') {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].altText` : 'altText',
+                msg: 'Alt text must be a string',
+                value: media.altText
+            });
+        }
+
+        if (media.isPrimary !== undefined && typeof media.isPrimary !== 'boolean') {
+            errors.push({
+                param: Array.isArray(req.body) ? `[${index}].isPrimary` : 'isPrimary',
+                msg: 'isPrimary must be a boolean',
+                value: media.isPrimary
+            });
+        }
+    });
+
+    if (errors.length > 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors
+        });
+    }
+
+    next();
+};
 
 exports.pricingRuleValidation = [
     body('name')

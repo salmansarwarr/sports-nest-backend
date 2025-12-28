@@ -517,7 +517,7 @@ venueSchema.statics.searchVenues = function (searchParams) {
     const skip = (page - 1) * limit;
 
     return this.find(query)
-        .populate('owner', 'firstName lastName email')
+        .populate('owner', 'firstName lastName email profilePicture')
         .select('-verification.documents')
         .sort(sortBy)
         .skip(skip)
