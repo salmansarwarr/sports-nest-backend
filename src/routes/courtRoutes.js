@@ -6,6 +6,7 @@ const {
     createCourtValidation,
     updateCourtValidation,
     courtMediaValidation,
+    courtMediaBulkValidation,
     pricingRuleValidation,
     availabilityExceptionValidation,
     calculatePriceValidation,
@@ -292,7 +293,7 @@ router.post(
     authenticate,
     authorize('owner', 'manager', 'admin'),
     mongoIdValidation,
-    courtMediaValidation,
+    courtMediaBulkValidation,
     courtController.addMedia
 );
 

@@ -34,19 +34,21 @@ app.use(
     })
 );
 
-// Global rate limiting
-const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
-    message: {
-        success: false,
-        message: "Too many requests from this IP, please try again later.",
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
+// Global rate limiting (disabled in development)
+if (process.env.NODE_ENV !== 'development' && process.env.DISABLE_RATE_LIMIT !== 'true') {
+    const globalLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+        message: {
+            success: false,
+            message: "Too many requests from this IP, please try again later.",
+        },
+        standardHeaders: true,
+        legacyHeaders: false,
+    });
 
-app.use(globalLimiter);
+    app.use(globalLimiter);
+}
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));

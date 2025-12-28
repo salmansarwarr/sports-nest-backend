@@ -64,8 +64,34 @@ const requireEmailVerification = (req, res, next) => {
   next();
 };
 
+// Optional authentication - sets req.user if token is valid, but doesn't fail if no token
+const optionalAuthenticate = async (req, res, next) => {
+  try {
+    const authHeader = req.header('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No token provided, continue without setting req.user
+      return next();
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = JWTUtils.verifyAccessToken(token);
+    
+    const user = await User.findById(decoded.userId);
+    if (user && user.isActive) {
+      req.user = user;
+    }
+    // If user not found or inactive, just continue without setting req.user
+    next();
+  } catch (error) {
+    // If token is invalid, just continue without setting req.user
+    next();
+  }
+};
+
 module.exports = {
   authenticate,
   authorize,
-  requireEmailVerification
+  requireEmailVerification,
+  optionalAuthenticate
 };
