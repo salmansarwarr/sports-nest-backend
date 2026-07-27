@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
-const { authenticate: protect, authorize } = require('../middleware/auth');
+const { authenticate: protect, authorize, requireEmailVerification } = require('../middleware/auth');
 const {
     createBookingValidation,
     updateBookingValidation,
@@ -126,6 +126,7 @@ const {
 router.post(
     '/',
     protect,
+    requireEmailVerification,
     createBookingValidation,
     bookingController.createBooking
 );

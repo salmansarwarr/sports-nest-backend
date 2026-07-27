@@ -1,8 +1,10 @@
+const logger = require('../utils/logger');
+
 const errorHandler = (err, req, res, next) => {
     let error = { ...err };
     error.message = err.message;
 
-    console.error("Error:", err);
+    logger.error(err.message, { stack: err.stack, path: req.originalUrl, method: req.method });
 
     // Mongoose bad ObjectId
     if (err.name === "CastError") {
@@ -38,6 +40,11 @@ const errorHandler = (err, req, res, next) => {
     if (err.name === "TokenExpiredError") {
         const message = "Token expired";
         error = { message, statusCode: 401 };
+    }
+
+    // Multer upload errors
+    if (err.name === "MulterError" || err.message?.includes('Only JPEG, PNG, WEBP, and GIF')) {
+        error = { message: err.message, statusCode: 400 };
     }
 
     res.status(error.statusCode || 500).json({

@@ -1,5 +1,6 @@
 require('dotenv').config();
 const app = require('./src/app');
+const scheduler = require('./src/utils/scheduler');
 
 const PORT = process.env.PORT || 8000;
 
@@ -8,6 +9,7 @@ const server = app.listen(PORT, () => {
   console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
   console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  scheduler.init();
 });
 
 // Handle unhandled promise rejections
@@ -27,6 +29,7 @@ process.on('uncaughtException', (err) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
+  scheduler.stop();
   server.close(() => {
     console.log('Process terminated');
   });
