@@ -35,3 +35,5 @@ process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
 process.env.JWT_EXPIRE = '15m';
 process.env.JWT_REFRESH_EXPIRE = '7d';
 process.env.BCRYPT_ROUNDS = '4'; // Lower for faster tests
+process.env.GOOGLE_CLIENT_ID = 'test-google-client-id';
+process.env.GOOGLE_CLIENT_SECRET = 'test-google-client-secret';

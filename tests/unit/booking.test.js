@@ -17,6 +17,17 @@ const {
     getMyBookings
 } = require('../../src/controllers/bookingController');
 
+// Returns a Date `daysFromNow` days ahead, fixed at `hour`:00 local time. The test
+// court's operating hours are 08:00-20:00 every day; using a fixed mid-day hour
+// (rather than Date.now() + N*60*60*1000, which preserves the current hour-of-day)
+// keeps availability-dependent tests deterministic regardless of when they're run.
+const getSlotTime = (daysFromNow, hour = 10) => {
+    const date = new Date();
+    date.setDate(date.getDate() + daysFromNow);
+    date.setHours(hour, 0, 0, 0);
+    return date;
+};
+
 describe('Booking Model', () => {
     let venue, court, user;
 
@@ -387,7 +398,7 @@ describe('Booking Controller', () => {
 
     describe('createBooking', () => {
         it('should create a single booking successfully', async () => {
-            const startTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const startTime = getSlotTime(1);
             const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
 
             mockReq.user = user;
@@ -457,7 +468,7 @@ describe('Booking Controller', () => {
         });
 
         it('should reject booking for conflicting time slot', async () => {
-            const startTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const startTime = getSlotTime(1);
             const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
 
             // Create first booking
@@ -655,7 +666,7 @@ describe('Booking Controller', () => {
         let booking;
 
         beforeEach(async () => {
-            const startTime = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours from now
+            const startTime = getSlotTime(2);
             const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
 
             booking = await Booking.create({
@@ -690,7 +701,7 @@ describe('Booking Controller', () => {
         });
 
         it('should reschedule booking to new time', async () => {
-            const newStartTime = new Date(Date.now() + 72 * 60 * 60 * 1000);
+            const newStartTime = getSlotTime(3);
             const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
 
             mockReq.user = user;
@@ -793,7 +804,7 @@ describe('Booking Controller', () => {
 
     describe('checkAvailability', () => {
         it('should return available for free time slot', async () => {
-            const startTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const startTime = getSlotTime(1);
             const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
 
             mockReq.body = {
@@ -814,7 +825,7 @@ describe('Booking Controller', () => {
         });
 
         it('should return unavailable for booked time slot', async () => {
-            const startTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const startTime = getSlotTime(1);
             const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
 
             // Create booking
