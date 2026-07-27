@@ -2,6 +2,7 @@ const Booking = require('../models/Booking');
 const Court = require('../models/Court');
 const Venue = require('../models/Venue');
 const { validationResult } = require('express-validator');
+const EmailService = require('../utils/email');
 
 /**
  * @desc    Create a new booking
@@ -192,6 +193,14 @@ exports.createBooking = async (req, res, next) => {
 
         // Populate references before sending response
         await booking.populate('user court venue');
+
+        if (booking.status === 'confirmed') {
+            try {
+                await EmailService.sendBookingConfirmationEmail(req.user, booking);
+            } catch (emailError) {
+                console.error('Failed to send booking confirmation email:', emailError);
+            }
+        }
 
         res.status(201).json({
             success: true,
@@ -506,7 +515,7 @@ exports.cancelBooking = async (req, res, next) => {
             });
         }
 
-        const booking = await Booking.findById(req.params.id).populate('court venue');
+        const booking = await Booking.findById(req.params.id).populate('user court venue');
 
         if (!booking) {
             return res.status(404).json({
@@ -516,7 +525,7 @@ exports.cancelBooking = async (req, res, next) => {
         }
 
         // Check authorization
-        const isOwner = booking.user.toString() === req.user._id.toString();
+        const isOwner = booking.user._id.toString() === req.user._id.toString();
         const isVenueOwner = booking.venue.owner.toString() === req.user._id.toString();
         const isCourtOwner = booking.court.owner.toString() === req.user._id.toString();
         const isAdmin = req.user.role === 'admin';
@@ -556,6 +565,12 @@ exports.cancelBooking = async (req, res, next) => {
         }
 
         await booking.save();
+
+        try {
+            await EmailService.sendBookingCancellationEmail(booking.user, booking, reason);
+        } catch (emailError) {
+            console.error('Failed to send booking cancellation email:', emailError);
+        }
 
         res.status(200).json({
             success: true,
@@ -662,7 +677,7 @@ exports.getAvailableSlots = async (req, res, next) => {
  */
 exports.approveBooking = async (req, res, next) => {
     try {
-        const booking = await Booking.findById(req.params.id).populate('court venue');
+        const booking = await Booking.findById(req.params.id).populate('user court venue');
 
         if (!booking) {
             return res.status(404).json({
@@ -698,7 +713,11 @@ exports.approveBooking = async (req, res, next) => {
 
         await booking.save();
 
-        // TODO: Send confirmation email/notification to user
+        try {
+            await EmailService.sendBookingConfirmationEmail(booking.user, booking);
+        } catch (emailError) {
+            console.error('Failed to send booking confirmation email:', emailError);
+        }
 
         res.status(200).json({
             success: true,
@@ -726,7 +745,7 @@ exports.rejectBooking = async (req, res, next) => {
             });
         }
 
-        const booking = await Booking.findById(req.params.id).populate('court venue');
+        const booking = await Booking.findById(req.params.id).populate('user court venue');
 
         if (!booking) {
             return res.status(404).json({
@@ -768,7 +787,11 @@ exports.rejectBooking = async (req, res, next) => {
 
         await booking.save();
 
-        // TODO: Send rejection notification to user
+        try {
+            await EmailService.sendBookingCancellationEmail(booking.user, booking, reason);
+        } catch (emailError) {
+            console.error('Failed to send booking rejection email:', emailError);
+        }
 
         res.status(200).json({
             success: true,

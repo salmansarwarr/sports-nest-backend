@@ -5,6 +5,7 @@ const { authenticate } = require("../middleware/auth.js");
 const Validation = require("../middleware/validation");
 const passport = require("passport");
 const JWTUtils = require("../utils/jwt.js");
+const upload = require("../middleware/upload.js");
 
 const {
     register,
@@ -19,6 +20,10 @@ const {
     resetPassword,
     verifyEmail,
     resendVerificationEmail,
+    updateAvatar,
+    getPreferences,
+    updatePreferences,
+    getRecentlyViewed,
 } = AuthController;
 
 const {
@@ -28,6 +33,7 @@ const {
     resetPasswordValidation,
     updateProfileValidation,
     changePasswordValidation,
+    updatePreferencesValidation,
 } = Validation;
 
 const router = express.Router();
@@ -710,5 +716,104 @@ router.get("/verify-email", verifyEmail);
  *         description: Email sending failed
  */
 router.post("/resend-verification", authenticate, resendVerificationEmail);
+
+/**
+ * @swagger
+ * /api/auth/avatar:
+ *   put:
+ *     summary: Upload/replace profile picture
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - avatar
+ *             properties:
+ *               avatar:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Avatar updated successfully
+ *       400:
+ *         description: Avatar image is required or invalid file type
+ *       401:
+ *         description: Authentication required
+ */
+router.put("/avatar", authenticate, upload.single("avatar"), updateAvatar);
+
+/**
+ * @swagger
+ * /api/auth/preferences:
+ *   get:
+ *     summary: Get current user's preferences
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Preferences retrieved successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.get("/preferences", authenticate, getPreferences);
+
+/**
+ * @swagger
+ * /api/auth/preferences:
+ *   put:
+ *     summary: Update current user's preferences
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               notifications:
+ *                 type: object
+ *                 properties:
+ *                   email:
+ *                     type: boolean
+ *                   sms:
+ *                     type: boolean
+ *                   push:
+ *                     type: boolean
+ *               language:
+ *                 type: string
+ *                 example: "en"
+ *               currency:
+ *                 type: string
+ *                 example: "PKR"
+ *     responses:
+ *       200:
+ *         description: Preferences updated successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.put("/preferences", authenticate, updatePreferencesValidation, updatePreferences);
+
+/**
+ * @swagger
+ * /api/auth/recently-viewed:
+ *   get:
+ *     summary: Get current user's recently viewed courts/venues
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Recently viewed items retrieved successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.get("/recently-viewed", authenticate, getRecentlyViewed);
 
 module.exports = router;

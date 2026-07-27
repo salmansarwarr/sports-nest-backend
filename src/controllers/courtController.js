@@ -215,6 +215,11 @@ exports.getCourt = async (req, res, next) => {
             });
         }
 
+        if (req.user) {
+            req.user.addRecentlyViewed('Court', court._id);
+            req.user.save().catch((err) => console.error('Failed to record recently viewed court:', err));
+        }
+
         res.status(200).json({
             success: true,
             data: court

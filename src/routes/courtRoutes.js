@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const courtController = require('../controllers/courtController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, optionalAuthenticate } = require('../middleware/auth');
 const {
     createCourtValidation,
     updateCourtValidation,
@@ -179,6 +179,7 @@ router.get(
  */
 router.get(
     '/:id',
+    optionalAuthenticate,
     courtController.getCourt
 );
 

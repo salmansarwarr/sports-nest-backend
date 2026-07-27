@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const User = require('../models/User.js');
 const JWTUtils = require('../utils/jwt.js');
 const EmailService = require('../utils/email.js');
+const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary.js');
 
 class AuthController {
     // Register new user
@@ -456,6 +457,102 @@ class AuthController {
             res.json({
                 success: true,
                 message: "Verification email sent successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Upload/replace profile picture
+    static async updateAvatar(req, res, next) {
+        try {
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Avatar image is required",
+                });
+            }
+
+            const result = await uploadToCloudinary(req.file.buffer, { folder: 'sports-nest/avatars' });
+
+            const previousPublicId = req.user.profilePicture?.publicId;
+            if (previousPublicId) {
+                try {
+                    await deleteFromCloudinary(previousPublicId);
+                } catch (cloudinaryError) {
+                    console.error('Failed to delete previous avatar:', cloudinaryError);
+                }
+            }
+
+            req.user.profilePicture = {
+                url: result.secure_url,
+                publicId: result.public_id,
+            };
+            await req.user.save();
+
+            res.json({
+                success: true,
+                message: "Avatar updated successfully",
+                data: {
+                    user: req.user.toJSON(),
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Get current user's preferences
+    static async getPreferences(req, res, next) {
+        try {
+            res.json({
+                success: true,
+                data: {
+                    preferences: req.user.preferences,
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Update current user's preferences
+    static async updatePreferences(req, res, next) {
+        try {
+            const { notifications, language, currency } = req.body;
+
+            if (notifications) {
+                if (notifications.email !== undefined) req.user.preferences.notifications.email = notifications.email;
+                if (notifications.sms !== undefined) req.user.preferences.notifications.sms = notifications.sms;
+                if (notifications.push !== undefined) req.user.preferences.notifications.push = notifications.push;
+            }
+            if (language !== undefined) req.user.preferences.language = language;
+            if (currency !== undefined) req.user.preferences.currency = currency;
+
+            await req.user.save();
+
+            res.json({
+                success: true,
+                message: "Preferences updated successfully",
+                data: {
+                    preferences: req.user.preferences,
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Get current user's recently viewed courts/venues
+    static async getRecentlyViewed(req, res, next) {
+        try {
+            const user = await req.user.populate('recentlyViewed.itemId');
+
+            res.json({
+                success: true,
+                data: {
+                    recentlyViewed: user.recentlyViewed,
+                },
             });
         } catch (error) {
             next(error);

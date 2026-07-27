@@ -204,6 +204,11 @@ exports.getVenue = async (req, res, next) => {
         const venueData = venue.toObject();
         venueData.activeCourtsCount = courtsCount;
 
+        if (req.user) {
+            req.user.addRecentlyViewed('Venue', venue._id);
+            req.user.save().catch((err) => console.error('Failed to record recently viewed venue:', err));
+        }
+
         res.status(200).json({
             success: true,
             data: venueData

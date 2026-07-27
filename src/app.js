@@ -10,6 +10,8 @@ const authRoutes = require('./routes/authRoutes.js');
 const venueRoutes = require('./routes/venueRoutes');
 const courtRoutes = require('./routes/courtRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const favoriteRoutes = require('./routes/favoriteRoutes');
 const errorHandler = require('./middleware/errorHandler.js');
 
 const passport = require('passport');
@@ -101,7 +103,9 @@ const swaggerOptions = {
             { name: 'Auth', description: 'Authentication endpoints' },
             { name: 'Venues', description: 'Venue management endpoints' },
             { name: 'Courts', description: 'Court management endpoints' },
-            { name: 'Bookings', description: 'Booking management endpoints' }
+            { name: 'Bookings', description: 'Booking management endpoints' },
+            { name: 'Reviews', description: 'Court review and rating endpoints' },
+            { name: 'Favorites', description: 'Favorites/wishlist endpoints' }
         ]
     },
     apis: ["./src/routes/*.js"],
@@ -139,6 +143,8 @@ app.use("/api/auth", authRoutes);
 app.use('/api/venues', venueRoutes);
 app.use('/api/courts', courtRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/favorites', favoriteRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

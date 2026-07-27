@@ -95,6 +95,46 @@ const userSchema = new mongoose.Schema(
                 },
             },
         ],
+        preferences: {
+            notifications: {
+                email: {
+                    type: Boolean,
+                    default: true,
+                },
+                sms: {
+                    type: Boolean,
+                    default: false,
+                },
+                push: {
+                    type: Boolean,
+                    default: true,
+                },
+            },
+            language: {
+                type: String,
+                default: 'en',
+            },
+            currency: {
+                type: String,
+                default: 'PKR',
+            },
+        },
+        recentlyViewed: [
+            {
+                itemType: {
+                    type: String,
+                    enum: ['Court', 'Venue'],
+                },
+                itemId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    refPath: 'recentlyViewed.itemType',
+                },
+                viewedAt: {
+                    type: Date,
+                    default: Date.now,
+                },
+            },
+        ],
     },
     {
         timestamps: true,
@@ -173,6 +213,19 @@ userSchema.methods.addRefreshToken = function (token) {
 // Remove refresh token
 userSchema.methods.removeRefreshToken = function (token) {
     this.refreshTokens = this.refreshTokens.filter((rt) => rt.token !== token);
+};
+
+// Track a recently viewed court/venue, most-recent-first, capped at 20 entries
+userSchema.methods.addRecentlyViewed = function (itemType, itemId) {
+    this.recentlyViewed = this.recentlyViewed.filter(
+        (rv) => !(rv.itemType === itemType && rv.itemId.toString() === itemId.toString())
+    );
+
+    this.recentlyViewed.unshift({ itemType, itemId });
+
+    if (this.recentlyViewed.length > 20) {
+        this.recentlyViewed = this.recentlyViewed.slice(0, 20);
+    }
 };
 
 module.exports = mongoose.model("User", userSchema);

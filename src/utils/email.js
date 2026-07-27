@@ -80,6 +80,61 @@ class EmailService {
       html
     });
   }
+
+  async sendBookingConfirmationEmail(user, booking) {
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Booking Confirmed!</h2>
+        <p>Hi ${user.firstName},</p>
+        <p>Your booking <strong>${booking.bookingNumber}</strong> is confirmed.</p>
+        <p><strong>Start:</strong> ${new Date(booking.startTime).toLocaleString()}</p>
+        <p><strong>End:</strong> ${new Date(booking.endTime).toLocaleString()}</p>
+        <p>Best regards,<br>Court Booking Team</p>
+      </div>
+    `;
+
+    await this.sendEmail({
+      email: user.email,
+      subject: `Booking Confirmed - ${booking.bookingNumber}`,
+      html
+    });
+  }
+
+  async sendBookingCancellationEmail(user, booking, reason) {
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Booking Cancelled</h2>
+        <p>Hi ${user.firstName},</p>
+        <p>Your booking <strong>${booking.bookingNumber}</strong> has been cancelled.</p>
+        ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+        <p>Best regards,<br>Court Booking Team</p>
+      </div>
+    `;
+
+    await this.sendEmail({
+      email: user.email,
+      subject: `Booking Cancelled - ${booking.bookingNumber}`,
+      html
+    });
+  }
+
+  async sendBookingReminderEmail(user, booking) {
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Upcoming Booking Reminder</h2>
+        <p>Hi ${user.firstName},</p>
+        <p>This is a reminder that your booking <strong>${booking.bookingNumber}</strong> starts soon.</p>
+        <p><strong>Start:</strong> ${new Date(booking.startTime).toLocaleString()}</p>
+        <p>Best regards,<br>Court Booking Team</p>
+      </div>
+    `;
+
+    await this.sendEmail({
+      email: user.email,
+      subject: `Reminder: Upcoming Booking - ${booking.bookingNumber}`,
+      html
+    });
+  }
 }
 
 module.exports = new EmailService();

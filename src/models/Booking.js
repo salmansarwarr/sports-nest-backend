@@ -446,6 +446,11 @@ const bookingSchema = new mongoose.Schema({
         default: false,
     },
 
+    reminderSent: {
+        type: Boolean,
+        default: false,
+    },
+
 }, {
     timestamps: true,
     toJSON: { virtuals: true },
@@ -496,8 +501,10 @@ bookingSchema.pre('save', async function (next) {
                 createdAt: { $gte: startOfDay, $lte: endOfDay }
             });
 
-            // Add a small random component to reduce collisions in tests
-            const randomComponent = Math.floor(Math.random() * 100);
+            // Add a random component to reduce collisions when multiple bookings
+            // are created in the same tick (e.g. Booking.create([...]) batches,
+            // common in tests, racing on the same countDocuments() read).
+            const randomComponent = Math.floor(Math.random() * 10000);
             const sequence = String(count + randomComponent + 1).padStart(4, '0');
             const bookingNumber = `BK${year}${month}${day}${sequence}`;
 

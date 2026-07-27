@@ -1,15 +1,34 @@
 const User = require("../../src/models/User.js");
+// Registered for their side-effect: getRecentlyViewed's dynamic refPath
+// population needs these models registered, and in the real app they're
+// always loaded via court/venue routes before any request comes in.
+require("../../src/models/Court.js");
+require("../../src/models/Venue.js");
 const JWTUtils = require("../../src/utils/jwt.js");
-const { register, login, resendVerificationEmail, getProfile, updateProfile, changePassword, forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken } = require("../../src/controllers/authController.js");
+const {
+    register, login, resendVerificationEmail, getProfile, updateProfile, changePassword,
+    forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken,
+    updateAvatar, getPreferences, updatePreferences, getRecentlyViewed,
+} = require("../../src/controllers/authController.js");
 const {
     sendWelcomeEmail: _sendWelcomeEmail,
     sendPasswordResetEmail: _sendPasswordResetEmail,
 } = require("../../src/utils/email.js");
+const { uploadToCloudinary: _uploadToCloudinary } = require("../../src/utils/cloudinary.js");
 
 // Mock EmailService
 jest.mock("../../src/utils/email", () => ({
     sendWelcomeEmail: jest.fn(),
     sendPasswordResetEmail: jest.fn(),
+}));
+
+// Mock Cloudinary so avatar-upload tests never hit the network
+jest.mock("../../src/utils/cloudinary", () => ({
+    uploadToCloudinary: jest.fn().mockResolvedValue({
+        secure_url: "https://res.cloudinary.com/test/avatar.jpg",
+        public_id: "sports-nest/avatars/test123",
+    }),
+    deleteFromCloudinary: jest.fn().mockResolvedValue({ result: "ok" }),
 }));
 
 describe("User Model", () => {
@@ -545,6 +564,141 @@ describe("Auth Controller", () => {
             );
         });
     });
+
+    describe("Avatar Upload", () => {
+        let user;
+        beforeEach(async () => {
+            user = await User.create({
+                firstName: "John",
+                lastName: "Doe",
+                email: "avatar@example.com",
+                password: "Password123!",
+            });
+            mockReq.user = user;
+            _uploadToCloudinary.mockClear();
+        });
+
+        it("should upload a new avatar", async () => {
+            mockReq.file = { buffer: Buffer.from("fake-image-data") };
+
+            await updateAvatar(mockReq, mockRes, mockNext);
+
+            expect(_uploadToCloudinary).toHaveBeenCalled();
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    success: true,
+                    message: "Avatar updated successfully",
+                    data: expect.objectContaining({
+                        user: expect.objectContaining({
+                            profilePicture: expect.objectContaining({
+                                url: "https://res.cloudinary.com/test/avatar.jpg",
+                                publicId: "sports-nest/avatars/test123",
+                            }),
+                        }),
+                    }),
+                })
+            );
+        });
+
+        it("should require a file", async () => {
+            mockReq.file = undefined;
+
+            await updateAvatar(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+    });
+
+    describe("Preferences", () => {
+        let user;
+        beforeEach(async () => {
+            user = await User.create({
+                firstName: "John",
+                lastName: "Doe",
+                email: "prefs@example.com",
+                password: "Password123!",
+            });
+            mockReq.user = user;
+        });
+
+        it("should get default preferences", async () => {
+            await getPreferences(mockReq, mockRes, mockNext);
+
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    success: true,
+                    data: expect.objectContaining({
+                        preferences: expect.objectContaining({
+                            notifications: expect.objectContaining({ email: true, push: true, sms: false }),
+                            language: "en",
+                            currency: "PKR",
+                        }),
+                    }),
+                })
+            );
+        });
+
+        it("should update preferences", async () => {
+            mockReq.body = { notifications: { sms: true }, language: "ur" };
+
+            await updatePreferences(mockReq, mockRes, mockNext);
+
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    success: true,
+                    data: expect.objectContaining({
+                        preferences: expect.objectContaining({
+                            notifications: expect.objectContaining({ sms: true, email: true }),
+                            language: "ur",
+                        }),
+                    }),
+                })
+            );
+
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.preferences.notifications.sms).toBe(true);
+        });
+    });
+
+    describe("Recently Viewed", () => {
+        let user;
+        beforeEach(async () => {
+            user = await User.create({
+                firstName: "John",
+                lastName: "Doe",
+                email: "recent@example.com",
+                password: "Password123!",
+            });
+            mockReq.user = user;
+        });
+
+        it("should track and return recently viewed items", async () => {
+            const fakeCourtId = new (require("mongoose").Types.ObjectId)();
+            user.addRecentlyViewed("Court", fakeCourtId);
+            await user.save();
+
+            await getRecentlyViewed(mockReq, mockRes, mockNext);
+
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    success: true,
+                    data: expect.objectContaining({
+                        recentlyViewed: expect.arrayContaining([
+                            expect.objectContaining({ itemType: "Court" }),
+                        ]),
+                    }),
+                })
+            );
+        });
+
+        it("should cap recently viewed at 20 entries and dedupe", () => {
+            for (let i = 0; i < 25; i++) {
+                user.addRecentlyViewed("Court", new (require("mongoose").Types.ObjectId)());
+            }
+            expect(user.recentlyViewed.length).toBe(20);
+        });
+    });
+
     describe("Password Reset", () => {
         let user;
         beforeEach(async () => {

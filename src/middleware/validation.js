@@ -208,6 +208,37 @@ const changePasswordValidation = [
     handleValidationErrors,
 ];
 
+const updatePreferencesValidation = [
+    body("notifications.email")
+        .optional()
+        .isBoolean()
+        .withMessage("notifications.email must be a boolean"),
+
+    body("notifications.sms")
+        .optional()
+        .isBoolean()
+        .withMessage("notifications.sms must be a boolean"),
+
+    body("notifications.push")
+        .optional()
+        .isBoolean()
+        .withMessage("notifications.push must be a boolean"),
+
+    body("language")
+        .optional()
+        .isString()
+        .isLength({ min: 2, max: 10 })
+        .withMessage("language must be a valid language code"),
+
+    body("currency")
+        .optional()
+        .isString()
+        .isLength({ min: 3, max: 3 })
+        .withMessage("currency must be a 3-letter currency code"),
+
+    handleValidationErrors,
+];
+
 module.exports = {
     registerValidation,
     loginValidation,
@@ -215,4 +246,5 @@ module.exports = {
     resetPasswordValidation,
     updateProfileValidation,
     changePasswordValidation,
+    updatePreferencesValidation,
 };
