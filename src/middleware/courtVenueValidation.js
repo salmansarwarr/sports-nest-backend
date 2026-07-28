@@ -552,6 +552,24 @@ exports.getRecommendedCourtsValidation = [
         .isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
 ];
 
+exports.compareCourtsValidation = [
+    query('ids')
+        .notEmpty().withMessage('ids query parameter is required')
+        .custom((value) => {
+            const ids = value.split(',').map((id) => id.trim()).filter(Boolean);
+            if (ids.length < 2) {
+                throw new Error('At least 2 court IDs are required to compare');
+            }
+            if (ids.length > 5) {
+                throw new Error('You can compare at most 5 courts at a time');
+            }
+            if (!ids.every((id) => /^[0-9a-fA-F]{24}$/.test(id))) {
+                throw new Error('All ids must be valid Mongo ObjectIds');
+            }
+            return true;
+        }),
+];
+
 // ID Parameter Validations
 
 exports.mongoIdValidation = [

@@ -14,6 +14,7 @@ const {
     courtStatusValidation,
     getCourtsQueryValidation,
     getRecommendedCourtsValidation,
+    compareCourtsValidation,
     mongoIdValidation,
     mongoIdAndMediaIdValidation,
     mongoIdAndRuleIdValidation,
@@ -187,6 +188,31 @@ router.get(
     '/recommended',
     getRecommendedCourtsValidation,
     courtController.getRecommendedCourts
+);
+
+/**
+ * @swagger
+ * /api/courts/compare:
+ *   get:
+ *     summary: Get 2-5 courts side-by-side for comparison
+ *     tags: [Courts]
+ *     parameters:
+ *       - in: query
+ *         name: ids
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of 2-5 court IDs
+ *     responses:
+ *       200:
+ *         description: Courts retrieved successfully
+ *       400:
+ *         description: Invalid ids list
+ */
+router.get(
+    '/compare',
+    compareCourtsValidation,
+    courtController.compareCourts
 );
 
 /**

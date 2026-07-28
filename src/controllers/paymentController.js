@@ -1,9 +1,13 @@
 const Payment = require('../models/Payment');
 const Booking = require('../models/Booking');
+const User = require('../models/User');
+const WalletTransaction = require('../models/WalletTransaction');
 const { validationResult } = require('express-validator');
 const stripeUtil = require('../utils/stripe');
 const { generateReceiptPdf } = require('../utils/pdf');
 const logger = require('../utils/logger');
+const loyaltyUtil = require('../utils/loyalty');
+const referralUtil = require('../utils/referral');
 
 /**
  * @desc    Create a Stripe payment intent for a booking
@@ -47,8 +51,13 @@ exports.createPaymentIntent = async (req, res, next) => {
             });
         }
 
+        // A wallet debit at booking-creation time may already have covered
+        // part of totalAmount (see bookingController.createBooking) - only
+        // the remainder needs a Stripe charge.
+        const remainder = booking.pricing.totalAmount - (booking.pricing.walletAmountApplied || 0);
+
         const intent = await stripeUtil.createPaymentIntent({
-            amount: booking.pricing.totalAmount,
+            amount: remainder,
             currency: booking.pricing.currency,
             metadata: { bookingId: booking._id.toString(), bookingNumber: booking.bookingNumber }
         });
@@ -59,7 +68,7 @@ exports.createPaymentIntent = async (req, res, next) => {
 
         if (payment) {
             payment.gatewayPaymentIntentId = intent.id;
-            payment.amount = booking.pricing.totalAmount;
+            payment.amount = remainder;
             payment.currency = booking.pricing.currency;
             await payment.save();
         } else {
@@ -68,7 +77,7 @@ exports.createPaymentIntent = async (req, res, next) => {
                 user: booking.user._id,
                 gateway: 'stripe',
                 gatewayPaymentIntentId: intent.id,
-                amount: booking.pricing.totalAmount,
+                amount: remainder,
                 currency: booking.pricing.currency,
                 status: 'pending'
             });
@@ -105,6 +114,26 @@ exports.handleWebhook = async (req, res) => {
         switch (event.type) {
             case 'payment_intent.succeeded': {
                 const intent = event.data.object;
+
+                // Wallet top-ups never create a Payment doc (they're not a
+                // booking transaction) - distinguished by intent metadata,
+                // credited directly to the wallet ledger. Guarded against
+                // webhook retries via a lookup on gatewayPaymentIntentId
+                // instead of a status field, since there's no Payment
+                // record here to gate on.
+                if (intent.metadata?.purpose === 'wallet_topup') {
+                    const alreadyCredited = await WalletTransaction.findOne({ gatewayPaymentIntentId: intent.id });
+                    if (!alreadyCredited && intent.metadata.userId) {
+                        const amount = Math.round(intent.amount) / 100;
+                        await User.creditWallet(intent.metadata.userId, amount, {
+                            source: 'top_up',
+                            description: 'Wallet top-up via Stripe',
+                            gatewayPaymentIntentId: intent.id,
+                        });
+                    }
+                    break;
+                }
+
                 const payment = await Payment.findOne({ gatewayPaymentIntentId: intent.id });
 
                 if (payment && payment.status !== 'succeeded') {
@@ -119,6 +148,9 @@ exports.handleWebhook = async (req, res) => {
                         booking.payment.paidAt = new Date();
                         booking.payment.transactionId = intent.id;
                         await booking.save();
+
+                        await loyaltyUtil.awardBookingPoints(booking);
+                        await referralUtil.processReferralQualification(booking);
                     }
                 }
                 break;

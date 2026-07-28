@@ -36,7 +36,7 @@ const paymentSchema = new mongoose.Schema({
 
     gateway: {
         type: String,
-        enum: ['stripe'],
+        enum: ['stripe', 'wallet'],
         default: 'stripe',
         required: true,
     },

@@ -6,6 +6,7 @@ const User = require('../../src/models/User');
 const PromoCode = require('../../src/models/PromoCode');
 const Payment = require('../../src/models/Payment');
 const AuditLog = require('../../src/models/AuditLog');
+const WalletTransaction = require('../../src/models/WalletTransaction');
 const {
     createBooking,
     getBookings,
@@ -605,6 +606,120 @@ describe('Booking Controller', () => {
         });
     });
 
+    describe('createBooking with wallet', () => {
+        it('should fully cover the booking from wallet balance with no Stripe charge needed', async () => {
+            await User.creditWallet(user._id, 5000, { source: 'admin_adjustment' });
+            const funded = await User.findById(user._id);
+
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = funded;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                useWallet: true
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await Booking.findOne({ user: user._id });
+            expect(created.pricing.walletAmountApplied).toBe(2100);
+            expect(created.isPaid).toBe(true);
+            expect(created.payment.status).toBe('completed');
+            expect(created.payment.method).toBe('wallet');
+
+            const payment = await Payment.findOne({ booking: created._id });
+            expect(payment.gateway).toBe('wallet');
+            expect(payment.status).toBe('succeeded');
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(5000 - 2100);
+            expect(reloadedUser.loyaltyPoints).toBe(Math.floor(2100 * 0.05));
+        });
+
+        it('should partially cover the booking from an insufficient wallet balance and leave it pending gateway payment', async () => {
+            await User.creditWallet(user._id, 500, { source: 'admin_adjustment' });
+            const funded = await User.findById(user._id);
+
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = funded;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                useWallet: true
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await Booking.findOne({ user: user._id });
+            expect(created.pricing.walletAmountApplied).toBe(500);
+            expect(created.isPaid).toBe(false);
+            expect(created.payment.status).toBe('pending');
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(0);
+            // Not yet fully paid - loyalty points only award once the
+            // booking's payment actually completes (here, on the later
+            // Stripe webhook).
+            expect(reloadedUser.loyaltyPoints).toBe(0);
+        });
+
+        it('should fall back to normal gateway payment when the wallet has no balance', async () => {
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                useWallet: true
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await Booking.findOne({ user: user._id });
+            expect(created.pricing.walletAmountApplied).toBe(0);
+            expect(created.isPaid).toBe(false);
+        });
+
+        it('should not apply wallet balance when useWallet is not set', async () => {
+            await User.creditWallet(user._id, 5000, { source: 'admin_adjustment' });
+            const funded = await User.findById(user._id);
+
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = funded;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString()
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await Booking.findOne({ user: user._id });
+            expect(created.pricing.walletAmountApplied).toBe(0);
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(5000);
+        });
+    });
+
     describe('getBookings', () => {
         beforeEach(async () => {
             // Create multiple bookings
@@ -931,8 +1046,79 @@ describe('Booking Controller', () => {
             const updatedBooking = await Booking.findById(booking._id);
             expect(updatedBooking.payment.status).toBe('refunded');
 
-            const auditEntry = await AuditLog.findOne({ action: 'payment.refunded', resourceId: updatedPayment._id });
+            const auditEntry = await AuditLog.findOne({ action: 'payment.refunded', resourceId: updatedBooking._id });
             expect(auditEntry).not.toBeNull();
+            expect(auditEntry.changes.get('gatewayRefunded')).toBe(2100);
+        });
+
+        it('should credit the wallet back (not attempt a gateway refund) when the booking was paid via wallet', async () => {
+            booking.pricing.walletAmountApplied = 2100;
+            booking.payment.status = 'completed';
+            booking.payment.method = 'wallet';
+            await booking.save();
+
+            await Payment.create({
+                booking: booking._id,
+                user: user._id,
+                gateway: 'wallet',
+                amount: 2100,
+                currency: 'PKR',
+                status: 'succeeded'
+            });
+
+            Stripe.__mockRefunds.create.mockClear();
+
+            mockReq.user = user;
+            mockReq.params = { id: booking._id.toString() };
+            mockReq.body = { reason: 'Personal emergency' };
+
+            await cancelBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(Stripe.__mockRefunds.create).not.toHaveBeenCalled();
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(2100);
+
+            const walletTx = await WalletTransaction.findOne({ user: user._id, source: 'refund' });
+            expect(walletTx).not.toBeNull();
+            expect(walletTx.amount).toBe(2100);
+
+            const updatedBooking = await Booking.findById(booking._id);
+            expect(updatedBooking.payment.status).toBe('refunded');
+        });
+
+        it('should split a refund between wallet credit-back and a gateway refund for a mixed-payment booking', async () => {
+            booking.pricing.walletAmountApplied = 500;
+            booking.payment.status = 'completed';
+            await booking.save();
+
+            await Payment.create({
+                booking: booking._id,
+                user: user._id,
+                gateway: 'stripe',
+                gatewayPaymentIntentId: 'pi_test_123',
+                amount: 1600,
+                currency: 'PKR',
+                status: 'succeeded'
+            });
+
+            Stripe.__mockRefunds.create.mockClear();
+
+            mockReq.user = user;
+            mockReq.params = { id: booking._id.toString() };
+            mockReq.body = { reason: 'Personal emergency' };
+
+            await cancelBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            // 100% refund-eligible (48h out): wallet covers its 500, Stripe refunds the remaining 1600.
+            expect(Stripe.__mockRefunds.create).toHaveBeenCalledWith(
+                expect.objectContaining({ payment_intent: 'pi_test_123', amount: 160000 })
+            );
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(500);
         });
     });
 

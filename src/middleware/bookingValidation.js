@@ -73,6 +73,10 @@ exports.createBookingValidation = [
         .optional()
         .isBoolean().withMessage('joinWaitlist must be a boolean'),
 
+    body('useWallet')
+        .optional()
+        .isBoolean().withMessage('useWallet must be a boolean'),
+
     body('participants')
         .optional()
         .isArray().withMessage('Participants must be an array'),

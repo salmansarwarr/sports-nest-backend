@@ -222,6 +222,41 @@ exports.getRecommendedCourts = async (req, res, next) => {
 };
 
 /**
+ * @desc    Get 2-5 courts side-by-side for comparison
+ * @route   GET /api/courts/compare
+ * @access  Public
+ */
+exports.compareCourts = async (req, res, next) => {
+    try {
+        // Unlike getCourts/getRecommendedCourts's optional numeric filters
+        // (safe to silently skip), a malformed `ids` list has no sane
+        // fallback, so validation is actually enforced here.
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                errors: errors.array()
+            });
+        }
+
+        const ids = req.query.ids.split(',').map(id => id.trim()).filter(Boolean);
+
+        const courts = await Court.find({ _id: { $in: ids }, status: 'active' })
+            .select('name slug sportType surfaceType courtType dimensions capacity amenities baseHourlyRate currency operatingHours stats media')
+            .populate('venue', 'name displayName address location contact')
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            count: courts.length,
+            data: courts
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * @desc    Get single court by ID or slug
  * @route   GET /api/courts/:id
  * @access  Public

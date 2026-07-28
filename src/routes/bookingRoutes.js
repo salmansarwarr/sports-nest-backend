@@ -114,6 +114,9 @@ const {
  *                 type: integer
  *               isGroupBooking:
  *                 type: boolean
+ *               useWallet:
+ *                 type: boolean
+ *                 description: Apply wallet balance toward this booking's totalAmount before any gateway charge
  *               notes:
  *                 type: string
  *               specialRequests:

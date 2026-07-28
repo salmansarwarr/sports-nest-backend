@@ -1,3 +1,4 @@
+const { authenticator } = require("otplib");
 const User = require("../../src/models/User.js");
 // Registered for their side-effect: getRecentlyViewed's dynamic refPath
 // population needs these models registered, and in the real app they're
@@ -11,8 +12,11 @@ const {
     updateAvatar, getPreferences, updatePreferences, getRecentlyViewed,
     registerDeviceToken, unregisterDeviceToken,
     deleteAccount, getDataExport,
+    verifyTwoFactor,
 } = require("../../src/controllers/authController.js");
+const { generateBackupCodes } = require("../../src/utils/twoFactor.js");
 const Favorite = require("../../src/models/Favorite.js");
+const Referral = require("../../src/models/Referral.js");
 const {
     sendWelcomeEmail: _sendWelcomeEmail,
     sendPasswordResetEmail: _sendPasswordResetEmail,
@@ -314,6 +318,57 @@ describe("Auth Controller", () => {
                 })
             );
         });
+
+        it("should always assign the new user their own referral code", async () => {
+            mockReq.body = {
+                firstName: "John", lastName: "Doe", email: "john.doe@example.com", password: "Password123!",
+            };
+
+            await register(mockReq, mockRes, mockNext);
+
+            const created = await User.findOne({ email: "john.doe@example.com" });
+            expect(created.referralCode).toEqual(expect.any(String));
+            expect(created.referralCode.length).toBeGreaterThan(0);
+        });
+
+        it("should set referredBy and create a pending Referral when a valid referral code is supplied", async () => {
+            const referrer = await User.create({
+                firstName: "Referrer", lastName: "User", email: "referrer@example.com",
+                password: "Password123!", referralCode: "REFCODE1",
+            });
+
+            mockReq.body = {
+                firstName: "Jane", lastName: "Doe", email: "jane.doe@example.com",
+                password: "Password123!", referralCode: "refcode1",
+            };
+
+            await register(mockReq, mockRes, mockNext);
+
+            const created = await User.findOne({ email: "jane.doe@example.com" });
+            expect(created.referredBy.toString()).toBe(referrer._id.toString());
+
+            const referral = await Referral.findOne({ referredUser: created._id });
+            expect(referral).not.toBeNull();
+            expect(referral.referrer.toString()).toBe(referrer._id.toString());
+            expect(referral.status).toBe("pending");
+        });
+
+        it("should silently ignore an unknown referral code and still register successfully", async () => {
+            mockReq.body = {
+                firstName: "Jane", lastName: "Doe", email: "jane.doe@example.com",
+                password: "Password123!", referralCode: "NOPE1234",
+            };
+
+            await register(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await User.findOne({ email: "jane.doe@example.com" });
+            expect(created.referredBy).toBeUndefined();
+
+            const referral = await Referral.findOne({ referredUser: created._id });
+            expect(referral).toBeNull();
+        });
     });
     describe("Login", () => {
         let user;
@@ -398,6 +453,92 @@ describe("Auth Controller", () => {
             const updatedUser = await User.findById(user._id);
             expect(updatedUser.lastLogin).not.toBe(originalLastLogin);
             expect(updatedUser.lastLogin).toBeInstanceOf(Date);
+        });
+
+        describe("with 2FA enabled", () => {
+            let secret;
+
+            beforeEach(async () => {
+                secret = authenticator.generateSecret();
+                user.twoFactorAuth.secret = secret;
+                user.twoFactorAuth.enabled = true;
+                await user.save();
+            });
+
+            it("should return a challenge token instead of tokens on correct password", async () => {
+                mockReq.body = { email: "john.doe@example.com", password: "Password123!" };
+
+                await login(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+                const response = mockRes.json.mock.calls[0][0];
+                expect(response.data.twoFactorRequired).toBe(true);
+                expect(response.data.challengeToken).toEqual(expect.any(String));
+                expect(response.data.tokens).toBeUndefined();
+            });
+
+            it("should complete login via /2fa/verify with a valid generated code", async () => {
+                mockReq.body = { email: "john.doe@example.com", password: "Password123!" };
+                await login(mockReq, mockRes, mockNext);
+                const { challengeToken } = mockRes.json.mock.calls[0][0].data;
+
+                mockReq.body = { challengeToken, code: authenticator.generate(secret) };
+                mockRes.json.mockClear();
+
+                await verifyTwoFactor(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+                const response = mockRes.json.mock.calls[0][0];
+                expect(response.data.tokens.accessToken).toEqual(expect.any(String));
+                expect(response.data.tokens.refreshToken).toEqual(expect.any(String));
+            });
+
+            it("should reject an incorrect code at /2fa/verify", async () => {
+                mockReq.body = { email: "john.doe@example.com", password: "Password123!" };
+                await login(mockReq, mockRes, mockNext);
+                const { challengeToken } = mockRes.json.mock.calls[0][0].data;
+
+                mockReq.body = { challengeToken, code: "000000" };
+                mockRes.json.mockClear();
+
+                await verifyTwoFactor(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(401);
+            });
+
+            it("should reject a garbage/expired challenge token at /2fa/verify", async () => {
+                mockReq.body = { challengeToken: "not-a-real-token", code: authenticator.generate(secret) };
+
+                await verifyTwoFactor(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(401);
+            });
+
+            it("should accept a valid single-use backup code at /2fa/verify", async () => {
+                const { plaintext, hashed } = generateBackupCodes();
+                user.twoFactorAuth.backupCodes = hashed;
+                await user.save();
+
+                mockReq.body = { email: "john.doe@example.com", password: "Password123!" };
+                await login(mockReq, mockRes, mockNext);
+                const { challengeToken } = mockRes.json.mock.calls[0][0].data;
+
+                mockReq.body = { challengeToken, code: plaintext[0] };
+                mockRes.json.mockClear();
+
+                await verifyTwoFactor(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+
+                // Single-use: the same backup code must not work twice, even
+                // via a still-unexpired challenge token.
+                mockReq.body = { challengeToken, code: plaintext[0] };
+                mockRes.status.mockClear();
+                mockRes.json.mockClear();
+
+                await verifyTwoFactor(mockReq, mockRes, mockNext);
+                expect(mockRes.status).toHaveBeenCalledWith(401);
+            });
         });
     });
     describe("Refresh Token", () => {

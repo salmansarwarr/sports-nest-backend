@@ -9,12 +9,16 @@ const JWTUtils = require('../utils/jwt.js');
 const EmailService = require('../utils/email.js');
 const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary.js');
 const auditLog = require('../utils/auditLog.js');
+const Referral = require('../models/Referral.js');
+const { generateUniqueReferralCode } = require('../utils/referral.js');
+const logger = require('../utils/logger.js');
+const twoFactorUtil = require('../utils/twoFactor.js');
 
 class AuthController {
     // Register new user
     static async register(req, res, next) {
         try {
-            const { firstName, lastName, email, password, phone, dateOfBirth, gender, profilePicture } =
+            const { firstName, lastName, email, password, phone, dateOfBirth, gender, profilePicture, referralCode } =
                 req.body;
 
             // Check if user already exists
@@ -26,6 +30,14 @@ class AuthController {
                 });
             }
 
+            // An unknown/invalid code is silently ignored - it never blocks
+            // signup. Every new user gets their own shareable code
+            // regardless of whether they were themselves referred.
+            let referrer = null;
+            if (referralCode) {
+                referrer = await User.findOne({ referralCode: referralCode.toUpperCase() });
+            }
+
             // Create new user
             const user = new User({
                 firstName,
@@ -35,12 +47,26 @@ class AuthController {
                 phone,
                 dateOfBirth,
                 gender,
-                profilePicture
+                profilePicture,
+                referredBy: referrer ? referrer._id : undefined,
+                referralCode: await generateUniqueReferralCode(),
             });
 
             // Generate email verification token
             const verificationToken = user.createEmailVerificationToken();
             await user.save();
+
+            if (user.referredBy) {
+                try {
+                    await Referral.create({
+                        referrer: user.referredBy,
+                        referredUser: user._id,
+                        referralCode: referralCode.toUpperCase(),
+                    });
+                } catch (referralError) {
+                    logger.error('Failed to create referral record', { userId: user._id, error: referralError.message });
+                }
+            }
 
             // Send verification email
             try {
@@ -110,6 +136,21 @@ class AuthController {
                 });
             }
 
+            // 2FA-gated accounts don't get a full token pair on password
+            // success alone - a short-lived challenge token stands in until
+            // /2fa/verify proves possession of the second factor. Google
+            // OAuth login is deliberately NOT gated here (separate code
+            // path in authRoutes.js's /google/callback) - a documented,
+            // intentional gap rather than an oversight.
+            if (user.twoFactorAuth?.enabled) {
+                const challengeToken = JWTUtils.generateTwoFactorChallengeToken(user._id);
+                return res.status(200).json({
+                    success: true,
+                    message: "Two-factor authentication code required",
+                    data: { twoFactorRequired: true, challengeToken },
+                });
+            }
+
             // Update last login
             user.lastLogin = new Date();
 
@@ -128,6 +169,200 @@ class AuthController {
                         refreshToken: tokens.refreshToken,
                     },
                 },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Complete a 2FA-gated login: verify the TOTP code (or a backup code)
+    // against the challenge token's user, then issue tokens the same way
+    // login() does for non-2FA accounts.
+    static async verifyTwoFactor(req, res, next) {
+        try {
+            const { challengeToken, code } = req.body;
+
+            let decoded;
+            try {
+                decoded = JWTUtils.verifyTwoFactorChallengeToken(challengeToken);
+            } catch (error) {
+                return res.status(401).json({
+                    success: false,
+                    message: "Invalid or expired two-factor challenge",
+                });
+            }
+
+            const user = await User.findById(decoded.userId).select("+twoFactorAuth.secret");
+            if (!user || !user.isActive || !user.twoFactorAuth?.enabled) {
+                return res.status(401).json({
+                    success: false,
+                    message: "Invalid or expired two-factor challenge",
+                });
+            }
+
+            const isValidTotp = twoFactorUtil.verifyTotp(code, user.twoFactorAuth.secret);
+            const isValidBackupCode = !isValidTotp && twoFactorUtil.consumeBackupCode(user, code);
+
+            if (!isValidTotp && !isValidBackupCode) {
+                return res.status(401).json({
+                    success: false,
+                    message: "Invalid verification code",
+                });
+            }
+
+            user.lastLogin = new Date();
+
+            const tokens = JWTUtils.generateTokenPair(user._id);
+            user.addRefreshToken(tokens.refreshToken);
+            await user.save();
+
+            res.json({
+                success: true,
+                message: "Login successful",
+                data: {
+                    user: user.toJSON(),
+                    tokens: {
+                        accessToken: tokens.accessToken,
+                        refreshToken: tokens.refreshToken,
+                    },
+                },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Begin 2FA enrollment: generate a pending secret and return a QR code
+    // for an authenticator app. Not yet enabled until enableTwoFactor
+    // confirms possession with a real generated code.
+    static async setupTwoFactor(req, res, next) {
+        try {
+            const user = await User.findById(req.user._id);
+
+            if (user.twoFactorAuth?.enabled) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Two-factor authentication is already enabled",
+                });
+            }
+
+            const secret = twoFactorUtil.generateSecret();
+            user.twoFactorAuth.pendingSecret = secret;
+            await user.save();
+
+            const qrCodeDataUrl = await twoFactorUtil.getQrCodeDataUrl(user.email, secret);
+
+            res.status(200).json({
+                success: true,
+                data: { qrCodeDataUrl, manualEntryKey: secret },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Confirm enrollment: the caller must submit a code generated from the
+    // pendingSecret QR-provisioned in setupTwoFactor. Promotes it to the
+    // active secret and returns one-time backup codes.
+    static async enableTwoFactor(req, res, next) {
+        try {
+            const { code } = req.body;
+
+            const user = await User.findById(req.user._id).select("+twoFactorAuth.pendingSecret");
+
+            if (user.twoFactorAuth?.enabled) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Two-factor authentication is already enabled",
+                });
+            }
+
+            if (!user.twoFactorAuth?.pendingSecret) {
+                return res.status(400).json({
+                    success: false,
+                    message: "No pending two-factor setup found - call /2fa/setup first",
+                });
+            }
+
+            if (!twoFactorUtil.verifyTotp(code, user.twoFactorAuth.pendingSecret)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid verification code",
+                });
+            }
+
+            const { plaintext, hashed } = twoFactorUtil.generateBackupCodes();
+
+            user.twoFactorAuth.secret = user.twoFactorAuth.pendingSecret;
+            user.twoFactorAuth.pendingSecret = undefined;
+            user.twoFactorAuth.enabled = true;
+            user.twoFactorAuth.backupCodes = hashed;
+            await user.save();
+
+            await auditLog.record({
+                actor: req.user,
+                action: 'user.2fa_enabled',
+                resourceType: 'User',
+                resourceId: user._id,
+                req,
+            });
+
+            res.status(200).json({
+                success: true,
+                message: "Two-factor authentication enabled",
+                data: { backupCodes: plaintext },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Disable 2FA - requires re-verifying password (mirrors deleteAccount's
+    // pattern) since this lowers account security.
+    static async disableTwoFactor(req, res, next) {
+        try {
+            const { password } = req.body;
+
+            const user = await User.findById(req.user._id).select("+password");
+
+            if (user.password) {
+                const isPasswordValid = await user.comparePassword(password);
+                if (!isPasswordValid) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Password is incorrect",
+                    });
+                }
+            }
+
+            user.twoFactorAuth.enabled = false;
+            user.twoFactorAuth.secret = undefined;
+            user.twoFactorAuth.pendingSecret = undefined;
+            user.twoFactorAuth.backupCodes = [];
+            await user.save();
+
+            await auditLog.record({
+                actor: req.user,
+                action: 'user.2fa_disabled',
+                resourceType: 'User',
+                resourceId: user._id,
+                req,
+            });
+
+            res.status(200).json({
+                success: true,
+                message: "Two-factor authentication disabled",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    static async getTwoFactorStatus(req, res, next) {
+        try {
+            res.status(200).json({
+                success: true,
+                data: { enabled: !!req.user.twoFactorAuth?.enabled },
             });
         } catch (error) {
             next(error);

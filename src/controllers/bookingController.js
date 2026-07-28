@@ -9,6 +9,8 @@ const stripeUtil = require('../utils/stripe');
 const logger = require('../utils/logger');
 const notify = require('../utils/notify');
 const auditLog = require('../utils/auditLog');
+const loyaltyUtil = require('../utils/loyalty');
+const referralUtil = require('../utils/referral');
 
 /**
  * @desc    Create a new booking
@@ -263,6 +265,58 @@ exports.createBooking = async (req, res, next) => {
         }
 
         await booking.save();
+
+        // Wallet payment - covers as much of totalAmount as the balance
+        // allows. A waitlisted booking is unpaid by design (mirrors the
+        // existing promo-code/refund handling for waitlist entries), so
+        // never debited here. Insufficient/race-lost balance silently falls
+        // back to full gateway payment rather than erroring the booking out.
+        if (bookingData.useWallet && !isJoiningWaitlist) {
+            const desiredWalletAmount = Math.min(req.user.walletBalance, totalAmount);
+
+            if (desiredWalletAmount > 0) {
+                const debitedUser = await User.debitWallet(req.user._id, desiredWalletAmount, {
+                    source: 'booking_payment',
+                    booking: booking._id,
+                    description: `Wallet payment for booking ${booking.bookingNumber}`
+                });
+
+                if (debitedUser) {
+                    booking.pricing.walletAmountApplied = desiredWalletAmount;
+
+                    if (desiredWalletAmount >= totalAmount) {
+                        booking.payment.status = 'completed';
+                        booking.payment.method = 'wallet';
+                        booking.payment.paidAt = new Date();
+                        booking.isPaid = true;
+
+                        await Payment.create({
+                            booking: booking._id,
+                            user: req.user._id,
+                            gateway: 'wallet',
+                            amount: desiredWalletAmount,
+                            currency: booking.pricing.currency,
+                            status: 'succeeded',
+                            paidAt: new Date()
+                        });
+
+                        await loyaltyUtil.awardBookingPoints(booking);
+                        await referralUtil.processReferralQualification(booking);
+                    }
+
+                    await booking.save();
+
+                    await auditLog.record({
+                        actor: req.user,
+                        action: 'wallet.debited',
+                        resourceType: 'Booking',
+                        resourceId: booking._id,
+                        changes: { amount: desiredWalletAmount },
+                        req
+                    });
+                }
+            }
+        }
 
         if (appliedPromoCode) {
             await PromoCode.updateOne({ _id: appliedPromoCode._id }, { $inc: { usedCount: 1 } });
@@ -1325,44 +1379,64 @@ async function generateRecurringBookings(parentBooking, court) {
 }
 
 /**
- * Refund the succeeded payment for a booking via the gateway, and mirror the
- * result onto booking.payment. Best-effort: never throws, so a gateway
- * failure never blocks the cancellation itself - it's logged for manual
- * reconciliation instead. Callers are responsible for saving `booking`
- * afterward.
+ * Refund a booking, splitting proportionally between wallet credit-back and
+ * a gateway refund based on how the original payment was split (see
+ * pricing.walletAmountApplied). Mirrors the result onto booking.payment.
+ * Best-effort: never throws, so a gateway/wallet failure never blocks the
+ * cancellation itself - it's logged for manual reconciliation instead.
+ * Callers are responsible for saving `booking` afterward.
  */
 async function processRefund(booking, amount, reason, req) {
     try {
-        const payment = await Payment.findOne({ booking: booking._id, status: 'succeeded' }).sort('-createdAt');
-        if (!payment || !payment.gatewayPaymentIntentId) {
-            return;
+        const walletApplied = booking.pricing.walletAmountApplied || 0;
+        const walletRefund = Math.min(walletApplied, amount);
+        const gatewayRefund = amount - walletRefund;
+
+        let gatewayRefunded = 0;
+        if (gatewayRefund > 0) {
+            const payment = await Payment.findOne({ booking: booking._id, gateway: 'stripe', status: 'succeeded' }).sort('-createdAt');
+            if (payment && payment.gatewayPaymentIntentId) {
+                const refund = await stripeUtil.createRefund({
+                    paymentIntentId: payment.gatewayPaymentIntentId,
+                    amount: gatewayRefund,
+                    reason: 'requested_by_customer'
+                });
+
+                payment.refunds.push({
+                    gatewayRefundId: refund.id,
+                    amount: gatewayRefund,
+                    reason,
+                    status: 'succeeded'
+                });
+                payment.status = gatewayRefund >= payment.amount ? 'refunded' : 'partially-refunded';
+                await payment.save();
+                gatewayRefunded = gatewayRefund;
+            }
         }
 
-        const refund = await stripeUtil.createRefund({
-            paymentIntentId: payment.gatewayPaymentIntentId,
-            amount,
-            reason: 'requested_by_customer'
-        });
+        let walletRefunded = 0;
+        if (walletRefund > 0) {
+            const credited = await User.creditWallet(booking.user._id || booking.user, walletRefund, {
+                source: 'refund',
+                booking: booking._id,
+                description: `Refund for booking ${booking.bookingNumber}`
+            });
+            if (credited) {
+                walletRefunded = walletRefund;
+            }
+        }
 
-        payment.refunds.push({
-            gatewayRefundId: refund.id,
-            amount,
-            reason,
-            status: 'succeeded'
-        });
-        payment.status = amount >= payment.amount ? 'refunded' : 'partially-refunded';
-        await payment.save();
-
-        booking.payment.status = payment.status;
+        const totalRefunded = gatewayRefunded + walletRefunded;
+        booking.payment.status = totalRefunded >= booking.pricing.totalAmount ? 'refunded' : 'partially-refunded';
         booking.payment.refundedAt = new Date();
         booking.payment.refundReason = reason;
 
         await auditLog.record({
             actor: req?.user,
             action: 'payment.refunded',
-            resourceType: 'Payment',
-            resourceId: payment._id,
-            changes: { amount, status: payment.status },
+            resourceType: 'Booking',
+            resourceId: booking._id,
+            changes: { gatewayRefunded, walletRefunded, status: booking.payment.status },
             reason,
             req
         });

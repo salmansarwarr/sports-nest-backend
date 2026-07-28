@@ -4,6 +4,7 @@ const Booking = require('../../src/models/Booking');
 const Court = require('../../src/models/Court');
 const Venue = require('../../src/models/Venue');
 const User = require('../../src/models/User');
+const WalletTransaction = require('../../src/models/WalletTransaction');
 const {
     createPaymentIntent,
     handleWebhook,
@@ -89,6 +90,23 @@ describe('Payment Controller', () => {
             expect(mockRes.status).toHaveBeenCalledWith(400);
         });
 
+        it('should size the intent to the remainder after a wallet debit already applied', async () => {
+            booking.pricing.walletAmountApplied = 600;
+            await booking.save();
+
+            mockReq.user = user;
+            mockReq.body = { bookingId: booking._id.toString() };
+
+            await createPaymentIntent(mockReq, mockRes, mockNext);
+
+            expect(Stripe.__mockPaymentIntents.create).toHaveBeenCalledWith(
+                expect.objectContaining({ amount: 150000 }) // (2100 - 600) * 100
+            );
+
+            const payment = await Payment.findOne({ booking: booking._id });
+            expect(payment.amount).toBe(1500);
+        });
+
         it('should reject payment intent creation from a non-owner', async () => {
             const stranger = await User.create({
                 firstName: 'Stranger', lastName: 'Danger', email: 'stranger@example.com',
@@ -130,6 +148,26 @@ describe('Payment Controller', () => {
             const updatedBooking = await Booking.findById(booking._id);
             expect(updatedBooking.payment.status).toBe('completed');
             expect(updatedBooking.isPaid).toBe(true);
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.loyaltyPoints).toBe(Math.floor(2100 * 0.05));
+        });
+
+        it('should award loyalty points exactly once even if the webhook fires twice for the same intent', async () => {
+            const event = JSON.stringify({
+                type: 'payment_intent.succeeded',
+                data: { object: { id: 'pi_test_123', latest_charge: 'ch_test_123' } }
+            });
+
+            mockReq.body = event;
+            mockReq.headers = { 'stripe-signature': 'test-sig' };
+            await handleWebhook(mockReq, mockRes);
+
+            mockReq.body = event;
+            await handleWebhook(mockReq, mockRes);
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.loyaltyPoints).toBe(Math.floor(2100 * 0.05));
         });
 
         it('should mark payment as failed on payment_intent.payment_failed', async () => {
@@ -159,6 +197,47 @@ describe('Payment Controller', () => {
             await handleWebhook(mockReq, mockRes);
 
             expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+    });
+
+    describe('handleWebhook wallet top-up', () => {
+        it('should credit the wallet directly, without creating a Payment doc, for a wallet_topup intent', async () => {
+            mockReq.body = JSON.stringify({
+                type: 'payment_intent.succeeded',
+                data: { object: { id: 'pi_topup_123', amount: 50000, metadata: { purpose: 'wallet_topup', userId: user._id.toString() } } }
+            });
+            mockReq.headers = { 'stripe-signature': 'test-sig' };
+
+            await handleWebhook(mockReq, mockRes);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(500);
+
+            const payment = await Payment.findOne({ gatewayPaymentIntentId: 'pi_topup_123' });
+            expect(payment).toBeNull();
+
+            const tx = await WalletTransaction.findOne({ gatewayPaymentIntentId: 'pi_topup_123' });
+            expect(tx.source).toBe('top_up');
+            expect(tx.amount).toBe(500);
+        });
+
+        it('should not double-credit a wallet_topup intent replayed by a webhook retry', async () => {
+            const eventBody = JSON.stringify({
+                type: 'payment_intent.succeeded',
+                data: { object: { id: 'pi_topup_456', amount: 20000, metadata: { purpose: 'wallet_topup', userId: user._id.toString() } } }
+            });
+
+            mockReq.body = eventBody;
+            mockReq.headers = { 'stripe-signature': 'test-sig' };
+            await handleWebhook(mockReq, mockRes);
+
+            mockReq.body = eventBody;
+            await handleWebhook(mockReq, mockRes);
+
+            const reloadedUser = await User.findById(user._id);
+            expect(reloadedUser.walletBalance).toBe(200);
         });
     });
 

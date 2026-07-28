@@ -202,6 +202,74 @@ describe('Court Routes E2E Tests', () => {
         });
     });
 
+    describe('GET /api/courts/compare', () => {
+        let secondCourtId;
+
+        beforeEach(async () => {
+            const first = await request(app)
+                .post('/api/courts')
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ ...courtData, venue: venueId });
+            courtId = first.body.data._id;
+
+            const second = await request(app)
+                .post('/api/courts')
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ ...courtData, name: 'Second Court', sportType: 'badminton', venue: venueId });
+            secondCourtId = second.body.data._id;
+        });
+
+        it('should return the requested courts side-by-side', async () => {
+            const response = await request(app)
+                .get('/api/courts/compare')
+                .query({ ids: `${courtId},${secondCourtId}` })
+                .expect(200);
+
+            expect(response.body.success).toBe(true);
+            expect(response.body.count).toBe(2);
+        });
+
+        it('should reject fewer than 2 ids', async () => {
+            const response = await request(app)
+                .get('/api/courts/compare')
+                .query({ ids: courtId })
+                .expect(400);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should reject more than 5 ids', async () => {
+            const tooMany = Array.from({ length: 6 }, () => new mongoose.Types.ObjectId().toString()).join(',');
+            const response = await request(app)
+                .get('/api/courts/compare')
+                .query({ ids: tooMany })
+                .expect(400);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should reject a malformed id in the list', async () => {
+            const response = await request(app)
+                .get('/api/courts/compare')
+                .query({ ids: `${courtId},not-a-valid-id` })
+                .expect(400);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should not be swallowed by the /:id route (regression)', async () => {
+            // Before the fix, "compare" registered after /:id would be
+            // treated as a literal slug lookup and 404, exactly like the
+            // /recommended bug from Phase 3.
+            const response = await request(app)
+                .get('/api/courts/compare')
+                .query({ ids: `${courtId},${secondCourtId}` });
+
+            expect(response.status).not.toBe(404);
+            expect(response.body.message).not.toBe('Court not found');
+        });
+    });
+
     describe('PUT /api/courts/:id', () => {
         beforeEach(async () => {
             const newCourtData = { ...courtData, venue: venueId };

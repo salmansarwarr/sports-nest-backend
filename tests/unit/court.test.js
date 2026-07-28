@@ -5,6 +5,7 @@ const {
     createCourt,
     getCourts,
     getRecommendedCourts,
+    compareCourts,
     getCourt,
     updateCourt,
     deleteCourt,
@@ -440,6 +441,52 @@ describe('Court Controller', () => {
             expect(mockRes.status).toHaveBeenCalledWith(200);
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('compareCourts', () => {
+        let secondCourt, inactiveCourt;
+
+        beforeEach(async () => {
+            secondCourt = await Court.create({
+                name: 'Badminton Court', venue: venue._id, sportType: 'badminton', courtType: 'indoor',
+                baseHourlyRate: 800, owner: owner._id
+            });
+            inactiveCourt = await Court.create({
+                name: 'Closed Court', venue: venue._id, sportType: 'tennis', courtType: 'outdoor',
+                baseHourlyRate: 900, owner: owner._id, status: 'inactive'
+            });
+        });
+
+        it('should return the requested courts side-by-side', async () => {
+            mockReq.query = { ids: `${court._id},${secondCourt._id}` };
+
+            await compareCourts(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.success).toBe(true);
+            expect(response.count).toBe(2);
+            const ids = response.data.map(c => c._id.toString());
+            expect(ids).toEqual(expect.arrayContaining([court._id.toString(), secondCourt._id.toString()]));
+        });
+
+        it('should silently exclude inactive courts from the requested ids', async () => {
+            mockReq.query = { ids: `${court._id},${inactiveCourt._id}` };
+
+            await compareCourts(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.count).toBe(1);
+            expect(response.data[0]._id.toString()).toBe(court._id.toString());
+        });
+
+        it('should propagate an internal error via next() rather than throwing when ids is missing', async () => {
+            mockReq.query = {};
+
+            await compareCourts(mockReq, mockRes, mockNext);
+
+            expect(mockNext).toHaveBeenCalledWith(expect.any(Error));
         });
     });
 

@@ -1,6 +1,9 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const WalletTransaction = require("./WalletTransaction");
+const LoyaltyTransaction = require("./LoyaltyTransaction");
+const { POINTS_TO_WALLET_RATE } = require("../config/loyaltyRates");
 
 const userSchema = new mongoose.Schema(
     {
@@ -158,6 +161,59 @@ const userSchema = new mongoose.Schema(
         // Set on self-service GDPR account deletion (anonymization) - distinct
         // from an admin merely deactivating an account via isActive:false.
         deletedAt: Date,
+        // Denormalized cache of the running total from WalletTransaction -
+        // see creditWallet/debitWallet below for the only sanctioned way to
+        // mutate this field.
+        walletBalance: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+        // Denormalized cache of the running total from LoyaltyTransaction -
+        // see earnLoyaltyPoints/redeemLoyaltyPoints below for the only
+        // sanctioned way to mutate this field.
+        loyaltyPoints: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
+        // Lazily generated (see src/utils/referral.js) rather than a static
+        // schema default, since it must be unique per user.
+        referralCode: {
+            type: String,
+            unique: true,
+            sparse: true,
+            uppercase: true,
+        },
+        // Set once at registration if a valid referralCode was supplied;
+        // never mutated afterward.
+        referredBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+        },
+        twoFactorAuth: {
+            enabled: {
+                type: Boolean,
+                default: false,
+            },
+            // select:false is the primary defense; toJSON.transform below
+            // strips these too as defense-in-depth for the one code path
+            // that must explicitly .select('+twoFactorAuth.secret').
+            secret: {
+                type: String,
+                select: false,
+            },
+            // Set during /2fa/setup, promoted to `secret` only once the
+            // user proves possession via /2fa/enable.
+            pendingSecret: {
+                type: String,
+                select: false,
+            },
+            backupCodes: [{
+                codeHash: String,
+                usedAt: Date,
+            }],
+        },
     },
     {
         timestamps: true,
@@ -169,6 +225,11 @@ const userSchema = new mongoose.Schema(
                 delete ret.emailVerificationToken;
                 delete ret.emailVerificationExpires;
                 delete ret.refreshTokens;
+                if (ret.twoFactorAuth) {
+                    delete ret.twoFactorAuth.secret;
+                    delete ret.twoFactorAuth.pendingSecret;
+                    delete ret.twoFactorAuth.backupCodes;
+                }
                 return ret;
             },
         },
@@ -264,6 +325,116 @@ userSchema.methods.addDeviceToken = function (token, platform) {
 // Unregister a push notification device token
 userSchema.methods.removeDeviceToken = function (token) {
     this.deviceTokens = this.deviceTokens.filter((dt) => dt.token !== token);
+};
+
+// Credit the wallet and record a matching ledger entry. Returns the updated
+// user, or null if amount is invalid or the user doesn't exist.
+userSchema.statics.creditWallet = async function (userId, amount, { source, description, booking, gatewayPaymentIntentId } = {}) {
+    if (!amount || amount <= 0) return null;
+
+    const user = await this.findByIdAndUpdate(
+        userId,
+        { $inc: { walletBalance: amount } },
+        { new: true }
+    );
+    if (!user) return null;
+
+    await WalletTransaction.create({
+        user: userId,
+        type: 'credit',
+        amount,
+        balanceAfter: user.walletBalance,
+        source,
+        description,
+        booking,
+        gatewayPaymentIntentId,
+    });
+
+    return user;
+};
+
+// Debit the wallet and record a matching ledger entry. The update is
+// atomically guarded on walletBalance >= amount so concurrent debits can
+// never overdraw the balance; returns null (no-op) if the balance is
+// insufficient at write time, or if amount is invalid.
+userSchema.statics.debitWallet = async function (userId, amount, { source, description, booking } = {}) {
+    if (!amount || amount <= 0) return null;
+
+    const user = await this.findOneAndUpdate(
+        { _id: userId, walletBalance: { $gte: amount } },
+        { $inc: { walletBalance: -amount } },
+        { new: true }
+    );
+    if (!user) return null;
+
+    await WalletTransaction.create({
+        user: userId,
+        type: 'debit',
+        amount,
+        balanceAfter: user.walletBalance,
+        source,
+        description,
+        booking,
+    });
+
+    return user;
+};
+
+// Award loyalty points and record a matching ledger entry. Returns the
+// updated user, or null if points is invalid or the user doesn't exist.
+userSchema.statics.earnLoyaltyPoints = async function (userId, points, { source, description, booking } = {}) {
+    if (!points || points <= 0) return null;
+
+    const user = await this.findByIdAndUpdate(
+        userId,
+        { $inc: { loyaltyPoints: points } },
+        { new: true }
+    );
+    if (!user) return null;
+
+    await LoyaltyTransaction.create({
+        user: userId,
+        type: 'earn',
+        points,
+        pointsBalanceAfter: user.loyaltyPoints,
+        source,
+        description,
+        booking,
+    });
+
+    return user;
+};
+
+// Redeem loyalty points into wallet credit at POINTS_TO_WALLET_RATE. The
+// points debit is atomically guarded on loyaltyPoints >= points (same
+// race-safety idiom as debitWallet); the wallet credit only happens once
+// that debit succeeds. Returns the updated user (reflecting both balances),
+// or null if points is invalid or the balance is insufficient.
+userSchema.statics.redeemLoyaltyPoints = async function (userId, points, { description } = {}) {
+    if (!points || points <= 0) return null;
+
+    const user = await this.findOneAndUpdate(
+        { _id: userId, loyaltyPoints: { $gte: points } },
+        { $inc: { loyaltyPoints: -points } },
+        { new: true }
+    );
+    if (!user) return null;
+
+    await LoyaltyTransaction.create({
+        user: userId,
+        type: 'redeem',
+        points,
+        pointsBalanceAfter: user.loyaltyPoints,
+        source: 'redemption',
+        description,
+    });
+
+    const credited = await this.creditWallet(userId, points * POINTS_TO_WALLET_RATE, {
+        source: 'loyalty_redemption',
+        description: description || `Redeemed ${points} loyalty points`,
+    });
+
+    return credited || user;
 };
 
 module.exports = mongoose.model("User", userSchema);

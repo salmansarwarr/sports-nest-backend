@@ -84,6 +84,12 @@ const registerValidation = [
         .isString()
         .withMessage("Profile picture publicId must be a string"),
 
+    body("referralCode")
+        .optional()
+        .isString()
+        .isLength({ min: 4, max: 20 })
+        .withMessage("Referral code must be between 4 and 20 characters"),
+
     handleValidationErrors,
 ];
 
@@ -263,6 +269,25 @@ const deleteAccountValidation = [
     handleValidationErrors,
 ];
 
+const verifyTwoFactorValidation = [
+    body("challengeToken").notEmpty().withMessage("Challenge token is required"),
+    body("code").notEmpty().withMessage("Verification code is required"),
+
+    handleValidationErrors,
+];
+
+const enableTwoFactorValidation = [
+    body("code").notEmpty().withMessage("Verification code is required"),
+
+    handleValidationErrors,
+];
+
+const disableTwoFactorValidation = [
+    body("password").notEmpty().withMessage("Password is required to disable two-factor authentication"),
+
+    handleValidationErrors,
+];
+
 module.exports = {
     registerValidation,
     loginValidation,
@@ -274,4 +299,7 @@ module.exports = {
     registerDeviceTokenValidation,
     unregisterDeviceTokenValidation,
     deleteAccountValidation,
+    verifyTwoFactorValidation,
+    enableTwoFactorValidation,
+    disableTwoFactorValidation,
 };

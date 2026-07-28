@@ -45,3 +45,13 @@ process.env.FIREBASE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\ntest\n-----END 
 process.env.TWILIO_ACCOUNT_SID = 'AC_test_dummy';
 process.env.TWILIO_AUTH_TOKEN = 'test_auth_token';
 process.env.TWILIO_WHATSAPP_NUMBER = '+14155238886';
+// Rate limiting (src/app.js's global limiter, and the auth-route-specific
+// limiters in src/routes/authRoutes.js) is only skipped for NODE_ENV
+// 'development' by default - 'test' still enforces it. E2E suites that
+// register/login several users per test (each with a beforeEach re-running
+// the same flow) can realistically exceed the 100-req/15min window within a
+// single file, since Jest gives each test file its own module registry and
+// therefore its own in-memory limiter state. Rate limiting itself isn't
+// under test anywhere in this suite, so bypass it globally the same way the
+// app already supports for local development.
+process.env.DISABLE_RATE_LIMIT = 'true';

@@ -255,6 +255,16 @@ const bookingSchema = new mongoose.Schema({
             default: 0,
             min: 0,
         },
+        // Portion of totalAmount paid out of the user's wallet balance at
+        // booking time. Not a discount (wallet is a payment method, so this
+        // never enters `discounts`) - used to size the remaining Stripe
+        // charge and to split refunds proportionally between wallet credit
+        // and a gateway refund.
+        walletAmountApplied: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
     },
 
     // Payment Information

@@ -28,6 +28,11 @@ const {
     unregisterDeviceToken,
     deleteAccount,
     getDataExport,
+    verifyTwoFactor,
+    setupTwoFactor,
+    enableTwoFactor,
+    disableTwoFactor,
+    getTwoFactorStatus,
 } = AuthController;
 
 const {
@@ -41,6 +46,9 @@ const {
     registerDeviceTokenValidation,
     unregisterDeviceTokenValidation,
     deleteAccountValidation,
+    verifyTwoFactorValidation,
+    enableTwoFactorValidation,
+    disableTwoFactorValidation,
 } = Validation;
 
 const router = express.Router();
@@ -68,6 +76,20 @@ const generalLimiter = isDevelopment ? bypassLimiter : rateLimit({
     message: {
         success: false,
         message: "Too many requests, please try again later.",
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Own instance rather than reusing authLimiter - /2fa/verify is a
+// brute-forceable 6-digit code and deserves its own tight window
+// independent of the (currently unused) login/register limiter.
+const twoFactorLimiter = isDevelopment ? bypassLimiter : rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // 10 attempts per window
+    message: {
+        success: false,
+        message: "Too many two-factor verification attempts, please try again later.",
     },
     standardHeaders: true,
     legacyHeaders: false,
@@ -925,5 +947,117 @@ router.get("/data-export", authenticate, getDataExport);
  *         description: Authentication required
  */
 router.delete("/account", authenticate, deleteAccountValidation, deleteAccount);
+
+/**
+ * @swagger
+ * /api/auth/2fa/setup:
+ *   post:
+ *     summary: Begin 2FA enrollment - generates a pending secret and QR code
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: QR code and manual entry key generated
+ *       400:
+ *         description: Two-factor authentication is already enabled
+ */
+router.post("/2fa/setup", authenticate, setupTwoFactor);
+
+/**
+ * @swagger
+ * /api/auth/2fa/enable:
+ *   post:
+ *     summary: Confirm 2FA enrollment with a generated code, returning one-time backup codes
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - code
+ *             properties:
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Two-factor authentication enabled
+ *       400:
+ *         description: Invalid verification code, or no pending setup
+ */
+router.post("/2fa/enable", authenticate, enableTwoFactorValidation, enableTwoFactor);
+
+/**
+ * @swagger
+ * /api/auth/2fa/disable:
+ *   post:
+ *     summary: Disable 2FA - requires re-verifying the account password
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Two-factor authentication disabled
+ *       400:
+ *         description: Password is incorrect
+ */
+router.post("/2fa/disable", authenticate, disableTwoFactorValidation, disableTwoFactor);
+
+/**
+ * @swagger
+ * /api/auth/2fa/status:
+ *   get:
+ *     summary: Get whether 2FA is enabled for the current user
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Two-factor status retrieved successfully
+ */
+router.get("/2fa/status", authenticate, getTwoFactorStatus);
+
+/**
+ * @swagger
+ * /api/auth/2fa/verify:
+ *   post:
+ *     summary: Complete a 2FA-gated login using a challenge token from /login
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - challengeToken
+ *               - code
+ *             properties:
+ *               challengeToken:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       401:
+ *         description: Invalid or expired challenge, or invalid code
+ */
+router.post("/2fa/verify", twoFactorLimiter, verifyTwoFactorValidation, verifyTwoFactor);
 
 module.exports = router;

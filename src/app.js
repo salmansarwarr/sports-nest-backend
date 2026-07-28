@@ -13,6 +13,9 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const walletRoutes = require('./routes/walletRoutes');
+const loyaltyRoutes = require('./routes/loyaltyRoutes');
+const referralRoutes = require('./routes/referralRoutes');
 const promoCodeRoutes = require('./routes/promoCodeRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const auditLogRoutes = require('./routes/auditLogRoutes');
@@ -121,6 +124,9 @@ const swaggerOptions = {
             { name: 'Reviews', description: 'Court review and rating endpoints' },
             { name: 'Favorites', description: 'Favorites/wishlist endpoints' },
             { name: 'Payments', description: 'Payment processing, history, and receipts' },
+            { name: 'Wallet', description: 'Wallet balance, top-up, and transaction ledger' },
+            { name: 'Loyalty', description: 'Loyalty points balance, ledger, and redemption into wallet credit' },
+            { name: 'Referrals', description: 'Referral code and referral tracking' },
             { name: 'PromoCodes', description: 'Promotional/coupon code management' },
             { name: 'Analytics', description: 'Revenue, occupancy, and booking analytics' },
             { name: 'AuditLogs', description: 'Admin audit trail' },
@@ -167,6 +173,9 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/loyalty', loyaltyRoutes);
+app.use('/api/referrals', referralRoutes);
 app.use('/api/promo-codes', promoCodeRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
