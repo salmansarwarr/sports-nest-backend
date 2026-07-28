@@ -24,6 +24,8 @@ const {
     getPreferences,
     updatePreferences,
     getRecentlyViewed,
+    registerDeviceToken,
+    unregisterDeviceToken,
 } = AuthController;
 
 const {
@@ -34,6 +36,8 @@ const {
     updateProfileValidation,
     changePasswordValidation,
     updatePreferencesValidation,
+    registerDeviceTokenValidation,
+    unregisterDeviceTokenValidation,
 } = Validation;
 
 const router = express.Router();
@@ -815,5 +819,63 @@ router.put("/preferences", authenticate, updatePreferencesValidation, updatePref
  *         description: Authentication required
  */
 router.get("/recently-viewed", authenticate, getRecentlyViewed);
+
+/**
+ * @swagger
+ * /api/auth/device-tokens:
+ *   post:
+ *     summary: Register a push notification device token
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - platform
+ *             properties:
+ *               token:
+ *                 type: string
+ *               platform:
+ *                 type: string
+ *                 enum: [ios, android, web]
+ *     responses:
+ *       200:
+ *         description: Device token registered successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.post("/device-tokens", authenticate, registerDeviceTokenValidation, registerDeviceToken);
+
+/**
+ * @swagger
+ * /api/auth/device-tokens:
+ *   delete:
+ *     summary: Unregister a push notification device token
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *             properties:
+ *               token:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Device token unregistered successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.delete("/device-tokens", authenticate, unregisterDeviceTokenValidation, unregisterDeviceToken);
 
 module.exports = router;

@@ -101,7 +101,7 @@ const userSchema = new mongoose.Schema(
                     type: Boolean,
                     default: true,
                 },
-                sms: {
+                whatsapp: {
                     type: Boolean,
                     default: false,
                 },
@@ -130,6 +130,19 @@ const userSchema = new mongoose.Schema(
                     refPath: 'recentlyViewed.itemType',
                 },
                 viewedAt: {
+                    type: Date,
+                    default: Date.now,
+                },
+            },
+        ],
+        deviceTokens: [
+            {
+                token: String,
+                platform: {
+                    type: String,
+                    enum: ['ios', 'android', 'web'],
+                },
+                addedAt: {
                     type: Date,
                     default: Date.now,
                 },
@@ -226,6 +239,21 @@ userSchema.methods.addRecentlyViewed = function (itemType, itemId) {
     if (this.recentlyViewed.length > 20) {
         this.recentlyViewed = this.recentlyViewed.slice(0, 20);
     }
+};
+
+// Register a push notification device token
+userSchema.methods.addDeviceToken = function (token, platform) {
+    this.deviceTokens = this.deviceTokens.filter((dt) => dt.token !== token);
+    this.deviceTokens.push({ token, platform });
+
+    if (this.deviceTokens.length > 10) {
+        this.deviceTokens = this.deviceTokens.slice(-10);
+    }
+};
+
+// Unregister a push notification device token
+userSchema.methods.removeDeviceToken = function (token) {
+    this.deviceTokens = this.deviceTokens.filter((dt) => dt.token !== token);
 };
 
 module.exports = mongoose.model("User", userSchema);

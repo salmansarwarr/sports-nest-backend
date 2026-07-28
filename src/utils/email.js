@@ -135,6 +135,24 @@ class EmailService {
       html
     });
   }
+
+  async sendParticipantInviteEmail(recipient, booking) {
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>You're Invited!</h2>
+        <p>Hi ${recipient.name},</p>
+        <p>You've been invited to join a group booking <strong>${booking.bookingNumber}</strong>.</p>
+        <p><strong>Start:</strong> ${new Date(booking.startTime).toLocaleString()}</p>
+        <p>Best regards,<br>Court Booking Team</p>
+      </div>
+    `;
+
+    await this.sendEmail({
+      email: recipient.email,
+      subject: `You're invited to a booking - ${booking.bookingNumber}`,
+      html
+    });
+  }
 }
 
 module.exports = new EmailService();

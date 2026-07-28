@@ -13,6 +13,7 @@ const {
     checkAvailabilityValidation,
     courtStatusValidation,
     getCourtsQueryValidation,
+    getRecommendedCourtsValidation,
     mongoIdValidation,
     mongoIdAndMediaIdValidation,
     mongoIdAndRuleIdValidation,
@@ -156,6 +157,36 @@ router.get(
     '/',
     getCourtsQueryValidation,
     courtController.getCourts
+);
+
+/**
+ * @swagger
+ * /api/courts/recommended:
+ *   get:
+ *     summary: Get featured/recommended courts, optionally scoped by proximity
+ *     tags: [Courts]
+ *     parameters:
+ *       - in: query
+ *         name: latitude
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: longitude
+ *         schema:
+ *           type: number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Recommended courts retrieved successfully
+ */
+router.get(
+    '/recommended',
+    getRecommendedCourtsValidation,
+    courtController.getRecommendedCourts
 );
 
 /**

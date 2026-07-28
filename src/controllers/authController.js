@@ -523,7 +523,7 @@ class AuthController {
 
             if (notifications) {
                 if (notifications.email !== undefined) req.user.preferences.notifications.email = notifications.email;
-                if (notifications.sms !== undefined) req.user.preferences.notifications.sms = notifications.sms;
+                if (notifications.whatsapp !== undefined) req.user.preferences.notifications.whatsapp = notifications.whatsapp;
                 if (notifications.push !== undefined) req.user.preferences.notifications.push = notifications.push;
             }
             if (language !== undefined) req.user.preferences.language = language;
@@ -553,6 +553,40 @@ class AuthController {
                 data: {
                     recentlyViewed: user.recentlyViewed,
                 },
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Register a push notification device token
+    static async registerDeviceToken(req, res, next) {
+        try {
+            const { token, platform } = req.body;
+
+            req.user.addDeviceToken(token, platform);
+            await req.user.save();
+
+            res.json({
+                success: true,
+                message: "Device token registered successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Unregister a push notification device token
+    static async unregisterDeviceToken(req, res, next) {
+        try {
+            const { token } = req.body;
+
+            req.user.removeDeviceToken(token);
+            await req.user.save();
+
+            res.json({
+                success: true,
+                message: "Device token unregistered successfully",
             });
         } catch (error) {
             next(error);

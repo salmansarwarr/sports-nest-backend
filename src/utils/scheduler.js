@@ -17,7 +17,7 @@ const updateBookingStatusesJob = async () => {
 
 const sendBookingRemindersJob = async () => {
     const Booking = require('../models/Booking');
-    const EmailService = require('./email');
+    const notify = require('./notify');
     try {
         const now = new Date();
         const windowEnd = new Date(now.getTime() + REMINDER_WINDOW_HOURS * 60 * 60 * 1000);
@@ -30,7 +30,7 @@ const sendBookingRemindersJob = async () => {
 
         for (const booking of bookings) {
             try {
-                await EmailService.sendBookingReminderEmail(booking.user, booking);
+                await notify.bookingReminder(booking.user, booking);
                 booking.reminderSent = true;
                 await booking.save();
             } catch (error) {
@@ -39,6 +39,39 @@ const sendBookingRemindersJob = async () => {
         }
     } catch (error) {
         logger.error('Scheduled job failed: sendBookingReminders', { error: error.message });
+    }
+};
+
+/**
+ * Fallback sweep for waitlist promotions. The primary path is inline (from
+ * cancelBooking/rejectBooking), but updateBookingStatuses can free a slot via
+ * no-show/expired without going through either of those, so this catches
+ * that case. Safe to be redundant with the inline path - settleWaitlist
+ * re-derives live state from the DB every call rather than relying on a
+ * flag, and its promoting update is guarded by an atomic status:'waitlisted'
+ * filter.
+ */
+const sweepWaitlistPromotionsJob = async () => {
+    const Booking = require('../models/Booking');
+    const notify = require('./notify');
+    try {
+        const slots = await Booking.aggregate([
+            { $match: { status: 'waitlisted' } },
+            { $group: { _id: { court: '$court', startTime: '$startTime', endTime: '$endTime' } } },
+        ]);
+
+        for (const { _id: slot } of slots) {
+            try {
+                const promoted = await Booking.settleWaitlist(slot.court, slot.startTime, slot.endTime);
+                if (promoted) {
+                    await notify.waitlistPromoted(promoted.user, promoted);
+                }
+            } catch (error) {
+                logger.error('Failed to settle waitlist during sweep', { slot, error: error.message });
+            }
+        }
+    } catch (error) {
+        logger.error('Scheduled job failed: sweepWaitlistPromotions', { error: error.message });
     }
 };
 
@@ -51,6 +84,7 @@ const init = () => {
 
     registerJob('updateBookingStatuses', '*/5 * * * *', updateBookingStatusesJob);
     registerJob('sendBookingReminders', '*/15 * * * *', sendBookingRemindersJob);
+    registerJob('sweepWaitlistPromotions', '*/10 * * * *', sweepWaitlistPromotionsJob);
 
     logger.info(`Scheduler initialized with ${jobs.length} job(s)`);
 };
@@ -60,4 +94,4 @@ const stop = () => {
     jobs.length = 0;
 };
 
-module.exports = { init, stop, updateBookingStatusesJob, sendBookingRemindersJob };
+module.exports = { init, stop, updateBookingStatusesJob, sendBookingRemindersJob, sweepWaitlistPromotionsJob };

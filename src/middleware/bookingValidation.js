@@ -69,6 +69,10 @@ exports.createBookingValidation = [
         .optional()
         .isBoolean(),
 
+    body('joinWaitlist')
+        .optional()
+        .isBoolean().withMessage('joinWaitlist must be a boolean'),
+
     body('participants')
         .optional()
         .isArray().withMessage('Participants must be an array'),
@@ -234,7 +238,8 @@ exports.getBookingsQueryValidation = [
             'completed',
             'cancelled',
             'no-show',
-            'expired'
+            'expired',
+            'waitlisted'
         ]).withMessage('Invalid status'),
 
     query('court')
@@ -270,6 +275,21 @@ exports.getBookingsQueryValidation = [
 exports.mongoIdValidation = [
     param('id')
         .isMongoId().withMessage('Invalid booking ID'),
+];
+
+// Booking ID + Participant ID Validation
+exports.mongoIdAndParticipantIdValidation = [
+    param('id')
+        .isMongoId().withMessage('Invalid booking ID'),
+    param('participantId')
+        .isMongoId().withMessage('Invalid participant ID'),
+];
+
+// Respond to Participant Invitation Validation
+exports.respondParticipantValidation = [
+    body('status')
+        .notEmpty().withMessage('Status is required')
+        .isIn(['confirmed', 'declined']).withMessage('Status must be confirmed or declined'),
 ];
 
 module.exports = exports;

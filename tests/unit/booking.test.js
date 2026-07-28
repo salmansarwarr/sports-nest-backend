@@ -17,7 +17,10 @@ const {
     rejectBooking,
     checkIn,
     checkOut,
-    getMyBookings
+    getMyBookings,
+    inviteParticipant,
+    respondToParticipant,
+    removeParticipant
 } = require('../../src/controllers/bookingController');
 
 // Returns a Date `daysFromNow` days ahead, fixed at `hour`:00 local time. The test
@@ -1292,6 +1295,396 @@ describe('Booking Controller', () => {
 
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.every(b => new Date(b.startTime) >= new Date())).toBe(true);
+        });
+    });
+
+    describe('Waitlist', () => {
+        let occupant, startTime, endTime;
+
+        beforeEach(async () => {
+            startTime = getSlotTime(1);
+            endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            occupant = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime,
+                endTime,
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+            });
+        });
+
+        describe('createBooking with joinWaitlist', () => {
+            it('should join the waitlist instead of failing with 409 when joinWaitlist is true', async () => {
+                const joiner = await User.create({
+                    firstName: 'Joiner', lastName: 'One', email: 'joiner1@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = joiner;
+                mockReq.body = {
+                    court: court._id.toString(),
+                    startTime: startTime.toISOString(),
+                    endTime: endTime.toISOString(),
+                    joinWaitlist: true
+                };
+
+                await createBooking(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(201);
+                expect(mockRes.json).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        success: true,
+                        message: expect.stringContaining('waitlist'),
+                        data: expect.objectContaining({ status: 'waitlisted', waitlistPosition: 1 })
+                    })
+                );
+            });
+
+            it('should still return 409 when joinWaitlist is not set', async () => {
+                const joiner = await User.create({
+                    firstName: 'Joiner', lastName: 'Two', email: 'joiner2@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = joiner;
+                mockReq.body = {
+                    court: court._id.toString(),
+                    startTime: startTime.toISOString(),
+                    endTime: endTime.toISOString()
+                };
+
+                await createBooking(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(409);
+            });
+
+            it('should assign incrementing positions to multiple waitlist joiners', async () => {
+                const joinerA = await User.create({
+                    firstName: 'Joiner', lastName: 'A', email: 'joinera@example.com', password: 'Password123!'
+                });
+                const joinerB = await User.create({
+                    firstName: 'Joiner', lastName: 'B', email: 'joinerb@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = joinerA;
+                mockReq.body = {
+                    court: court._id.toString(),
+                    startTime: startTime.toISOString(),
+                    endTime: endTime.toISOString(),
+                    joinWaitlist: true
+                };
+                await createBooking(mockReq, mockRes, mockNext);
+                expect(mockRes.json.mock.calls[0][0].data.waitlistPosition).toBe(1);
+
+                mockRes.status.mockClear();
+                mockRes.json.mockClear();
+
+                mockReq.user = joinerB;
+                await createBooking(mockReq, mockRes, mockNext);
+                expect(mockRes.json.mock.calls[0][0].data.waitlistPosition).toBe(2);
+            });
+
+            it('should reject joining a waitlist for a recurring booking', async () => {
+                const joiner = await User.create({
+                    firstName: 'Joiner', lastName: 'C', email: 'joinerc@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = joiner;
+                mockReq.body = {
+                    court: court._id.toString(),
+                    startTime: startTime.toISOString(),
+                    endTime: endTime.toISOString(),
+                    joinWaitlist: true,
+                    bookingType: 'recurring',
+                    recurringPattern: { frequency: 'weekly', occurrences: 4 }
+                };
+
+                await createBooking(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(400);
+            });
+        });
+
+        describe('Booking.settleWaitlist', () => {
+            it('should promote the front of the queue once the occupant cancels', async () => {
+                const waitlisted = await Booking.create({
+                    user: manager._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime,
+                    endTime,
+                    status: 'waitlisted',
+                    isWaitlisted: true,
+                    waitlistPosition: 1,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+
+                await Booking.findByIdAndUpdate(occupant._id, { status: 'cancelled' });
+
+                const promoted = await Booking.settleWaitlist(court._id, startTime, endTime);
+
+                expect(promoted).not.toBeNull();
+                expect(promoted._id.toString()).toBe(waitlisted._id.toString());
+                expect(promoted.status).toBe('confirmed');
+                expect(promoted.isWaitlisted).toBe(false);
+            });
+
+            it('should not promote anyone while the slot is still occupied', async () => {
+                await Booking.create({
+                    user: manager._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime,
+                    endTime,
+                    status: 'waitlisted',
+                    isWaitlisted: true,
+                    waitlistPosition: 1,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+
+                const promoted = await Booking.settleWaitlist(court._id, startTime, endTime);
+
+                expect(promoted).toBeNull();
+            });
+
+            it('should renumber the remaining queue after a promotion', async () => {
+                const second = await User.create({
+                    firstName: 'Second', lastName: 'Waiter', email: 'secondwaiter@example.com', password: 'Password123!'
+                });
+
+                const first = await Booking.create({
+                    user: manager._id, court: court._id, venue: venue._id, startTime, endTime,
+                    status: 'waitlisted', isWaitlisted: true, waitlistPosition: 1,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+                const secondEntry = await Booking.create({
+                    user: second._id, court: court._id, venue: venue._id, startTime, endTime,
+                    status: 'waitlisted', isWaitlisted: true, waitlistPosition: 2,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+
+                await Booking.findByIdAndUpdate(occupant._id, { status: 'cancelled' });
+                await Booking.settleWaitlist(court._id, startTime, endTime);
+
+                const updatedSecond = await Booking.findById(secondEntry._id);
+                expect(updatedSecond.status).toBe('waitlisted');
+                expect(updatedSecond.waitlistPosition).toBe(1);
+            });
+
+            it('should be race-safe: a second concurrent call promotes no one', async () => {
+                await Booking.create({
+                    user: manager._id, court: court._id, venue: venue._id, startTime, endTime,
+                    status: 'waitlisted', isWaitlisted: true, waitlistPosition: 1,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+                await Booking.findByIdAndUpdate(occupant._id, { status: 'cancelled' });
+
+                const [first, second] = await Promise.all([
+                    Booking.settleWaitlist(court._id, startTime, endTime),
+                    Booking.settleWaitlist(court._id, startTime, endTime)
+                ]);
+
+                const promotedCount = [first, second].filter(Boolean).length;
+                expect(promotedCount).toBe(1);
+            });
+        });
+
+        describe('cancelBooking triggers promotion', () => {
+            it('should promote the next waitlisted booking when the occupant cancels', async () => {
+                const waitlisted = await Booking.create({
+                    user: manager._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime,
+                    endTime,
+                    status: 'waitlisted',
+                    isWaitlisted: true,
+                    waitlistPosition: 1,
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+                });
+
+                mockReq.user = user;
+                mockReq.params = { id: occupant._id.toString() };
+                mockReq.body = { reason: 'Change of plans' };
+
+                await cancelBooking(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+
+                const updatedWaitlisted = await Booking.findById(waitlisted._id);
+                expect(updatedWaitlisted.status).toBe('confirmed');
+            });
+        });
+    });
+
+    describe('Group Booking Participants', () => {
+        let groupBooking;
+
+        beforeEach(async () => {
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            groupBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime,
+                endTime,
+                status: 'confirmed',
+                isGroupBooking: true,
+                groupSize: 3,
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+            });
+        });
+
+        describe('inviteParticipant', () => {
+            it('should invite a registered user by ID', async () => {
+                mockReq.user = user;
+                mockReq.params = { id: groupBooking._id.toString() };
+                mockReq.body = { user: manager._id.toString() };
+
+                await inviteParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(201);
+
+                const updated = await Booking.findById(groupBooking._id);
+                expect(updated.participants).toHaveLength(1);
+                expect(updated.participants[0].user.toString()).toBe(manager._id.toString());
+                expect(updated.participants[0].status).toBe('invited');
+            });
+
+            it('should invite a guest by name/email', async () => {
+                mockReq.user = user;
+                mockReq.params = { id: groupBooking._id.toString() };
+                mockReq.body = { name: 'Guest Player', email: 'guest@example.com' };
+
+                await inviteParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(201);
+
+                const updated = await Booking.findById(groupBooking._id);
+                expect(updated.participants).toHaveLength(1);
+                expect(updated.participants[0].user).toBeUndefined();
+                expect(updated.participants[0].email).toBe('guest@example.com');
+            });
+
+            it('should reject invites once the group is full', async () => {
+                groupBooking.groupSize = 2;
+                groupBooking.participants.push({ name: 'Already In', email: 'in@example.com', status: 'invited' });
+                await groupBooking.save();
+
+                mockReq.user = user;
+                mockReq.params = { id: groupBooking._id.toString() };
+                mockReq.body = { name: 'One Too Many', email: 'toomany@example.com' };
+
+                await inviteParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(400);
+            });
+
+            it('should reject invites from a user who is not the owner or group leader', async () => {
+                mockReq.user = manager;
+                mockReq.params = { id: groupBooking._id.toString() };
+                mockReq.body = { name: 'Guest', email: 'guest2@example.com' };
+
+                await inviteParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(403);
+            });
+        });
+
+        describe('respondToParticipant', () => {
+            it('should let the invited registered user confirm', async () => {
+                groupBooking.participants.push({ user: manager._id, name: 'Manager User', email: 'manager@example.com', status: 'invited' });
+                await groupBooking.save();
+                const participantId = groupBooking.participants[0]._id.toString();
+
+                mockReq.user = manager;
+                mockReq.params = { id: groupBooking._id.toString(), participantId };
+                mockReq.body = { status: 'confirmed' };
+
+                await respondToParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+
+                const updated = await Booking.findById(groupBooking._id);
+                expect(updated.participants[0].status).toBe('confirmed');
+            });
+
+            it('should reject a response from an unrelated user', async () => {
+                groupBooking.participants.push({ user: manager._id, name: 'Manager User', email: 'manager@example.com', status: 'invited' });
+                await groupBooking.save();
+                const participantId = groupBooking.participants[0]._id.toString();
+
+                const stranger = await User.create({
+                    firstName: 'Stranger', lastName: 'Danger', email: 'strangerbooking@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = stranger;
+                mockReq.params = { id: groupBooking._id.toString(), participantId };
+                mockReq.body = { status: 'confirmed' };
+
+                await respondToParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(403);
+            });
+        });
+
+        describe('removeParticipant', () => {
+            it('should let the booking owner remove a participant', async () => {
+                groupBooking.participants.push({ name: 'Guest', email: 'guest3@example.com', status: 'invited' });
+                await groupBooking.save();
+                const participantId = groupBooking.participants[0]._id.toString();
+
+                mockReq.user = user;
+                mockReq.params = { id: groupBooking._id.toString(), participantId };
+
+                await removeParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+
+                const updated = await Booking.findById(groupBooking._id);
+                expect(updated.participants).toHaveLength(0);
+            });
+
+            it('should let a participant remove themself', async () => {
+                groupBooking.participants.push({ user: manager._id, name: 'Manager User', email: 'manager@example.com', status: 'confirmed' });
+                await groupBooking.save();
+                const participantId = groupBooking.participants[0]._id.toString();
+
+                mockReq.user = manager;
+                mockReq.params = { id: groupBooking._id.toString(), participantId };
+
+                await removeParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(200);
+            });
+
+            it('should reject removal by an unrelated user', async () => {
+                groupBooking.participants.push({ name: 'Guest', email: 'guest4@example.com', status: 'invited' });
+                await groupBooking.save();
+                const participantId = groupBooking.participants[0]._id.toString();
+
+                const stranger = await User.create({
+                    firstName: 'Stranger', lastName: 'Two', email: 'strangertwo@example.com', password: 'Password123!'
+                });
+
+                mockReq.user = stranger;
+                mockReq.params = { id: groupBooking._id.toString(), participantId };
+
+                await removeParticipant(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(403);
+            });
         });
     });
 });

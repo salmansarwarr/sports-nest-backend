@@ -214,10 +214,10 @@ const updatePreferencesValidation = [
         .isBoolean()
         .withMessage("notifications.email must be a boolean"),
 
-    body("notifications.sms")
+    body("notifications.whatsapp")
         .optional()
         .isBoolean()
-        .withMessage("notifications.sms must be a boolean"),
+        .withMessage("notifications.whatsapp must be a boolean"),
 
     body("notifications.push")
         .optional()
@@ -239,6 +239,24 @@ const updatePreferencesValidation = [
     handleValidationErrors,
 ];
 
+const registerDeviceTokenValidation = [
+    body("token").notEmpty().withMessage("Device token is required"),
+
+    body("platform")
+        .notEmpty()
+        .withMessage("Platform is required")
+        .isIn(["ios", "android", "web"])
+        .withMessage("Platform must be ios, android, or web"),
+
+    handleValidationErrors,
+];
+
+const unregisterDeviceTokenValidation = [
+    body("token").notEmpty().withMessage("Device token is required"),
+
+    handleValidationErrors,
+];
+
 module.exports = {
     registerValidation,
     loginValidation,
@@ -247,4 +265,6 @@ module.exports = {
     updateProfileValidation,
     changePasswordValidation,
     updatePreferencesValidation,
+    registerDeviceTokenValidation,
+    unregisterDeviceTokenValidation,
 };

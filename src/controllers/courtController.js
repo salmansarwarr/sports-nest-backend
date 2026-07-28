@@ -172,6 +172,56 @@ exports.getCourts = async (req, res, next) => {
 };
 
 /**
+ * @desc    Get featured/recommended courts, optionally scoped by proximity
+ * @route   GET /api/courts/recommended
+ * @access  Public
+ */
+exports.getRecommendedCourts = async (req, res, next) => {
+    try {
+        const { latitude, longitude, limit = 10 } = req.query;
+        const cappedLimit = Math.min(parseInt(limit), 50);
+
+        const query = { status: 'active' };
+
+        if (latitude && longitude) {
+            const nearbyVenues = await Venue.findNearby(parseFloat(longitude), parseFloat(latitude), 15000, 50);
+            // Fall back to the ungated global query if nothing is nearby,
+            // rather than returning an empty result for sparse areas.
+            if (nearbyVenues.length > 0) {
+                query.venue = { $in: nearbyVenues.map(v => v._id) };
+            }
+        }
+
+        const candidates = await Court.find(query)
+            .populate('venue', 'name displayName address location')
+            .limit(200)
+            .lean();
+
+        const now = Date.now();
+        const scored = candidates.map(court => {
+            const daysSinceCreated = (now - new Date(court.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+            const score = (court.isFeatured ? 50 : 0)
+                + (court.stats?.averageRating || 0) * 10
+                + Math.min(court.stats?.totalReviews || 0, 50) * 0.4
+                + Math.max(0, 15 - daysSinceCreated / 6);
+
+            return { court, score };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        const courts = scored.slice(0, cappedLimit).map(s => s.court);
+
+        res.status(200).json({
+            success: true,
+            count: courts.length,
+            data: courts
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * @desc    Get single court by ID or slug
  * @route   GET /api/courts/:id
  * @access  Public

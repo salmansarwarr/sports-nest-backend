@@ -9,6 +9,7 @@ const {
     register, login, resendVerificationEmail, getProfile, updateProfile, changePassword,
     forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken,
     updateAvatar, getPreferences, updatePreferences, getRecentlyViewed,
+    registerDeviceToken, unregisterDeviceToken,
 } = require("../../src/controllers/authController.js");
 const {
     sendWelcomeEmail: _sendWelcomeEmail,
@@ -629,7 +630,7 @@ describe("Auth Controller", () => {
                     success: true,
                     data: expect.objectContaining({
                         preferences: expect.objectContaining({
-                            notifications: expect.objectContaining({ email: true, push: true, sms: false }),
+                            notifications: expect.objectContaining({ email: true, push: true, whatsapp: false }),
                             language: "en",
                             currency: "PKR",
                         }),
@@ -639,7 +640,7 @@ describe("Auth Controller", () => {
         });
 
         it("should update preferences", async () => {
-            mockReq.body = { notifications: { sms: true }, language: "ur" };
+            mockReq.body = { notifications: { whatsapp: true }, language: "ur" };
 
             await updatePreferences(mockReq, mockRes, mockNext);
 
@@ -648,7 +649,7 @@ describe("Auth Controller", () => {
                     success: true,
                     data: expect.objectContaining({
                         preferences: expect.objectContaining({
-                            notifications: expect.objectContaining({ sms: true, email: true }),
+                            notifications: expect.objectContaining({ whatsapp: true, email: true }),
                             language: "ur",
                         }),
                     }),
@@ -656,7 +657,7 @@ describe("Auth Controller", () => {
             );
 
             const updatedUser = await User.findById(user._id);
-            expect(updatedUser.preferences.notifications.sms).toBe(true);
+            expect(updatedUser.preferences.notifications.whatsapp).toBe(true);
         });
     });
 
@@ -696,6 +697,66 @@ describe("Auth Controller", () => {
                 user.addRecentlyViewed("Court", new (require("mongoose").Types.ObjectId)());
             }
             expect(user.recentlyViewed.length).toBe(20);
+        });
+    });
+
+    describe("Device Tokens", () => {
+        let user;
+        beforeEach(async () => {
+            user = await User.create({
+                firstName: "John",
+                lastName: "Doe",
+                email: "devicetoken@example.com",
+                password: "Password123!",
+            });
+            mockReq.user = user;
+        });
+
+        it("should register a device token", async () => {
+            mockReq.body = { token: "device-token-abc", platform: "android" };
+
+            await registerDeviceToken(mockReq, mockRes, mockNext);
+
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({ success: true, message: "Device token registered successfully" })
+            );
+
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.deviceTokens).toHaveLength(1);
+            expect(updatedUser.deviceTokens[0].token).toBe("device-token-abc");
+            expect(updatedUser.deviceTokens[0].platform).toBe("android");
+        });
+
+        it("should unregister a device token", async () => {
+            user.addDeviceToken("device-token-abc", "android");
+            await user.save();
+
+            mockReq.body = { token: "device-token-abc" };
+
+            await unregisterDeviceToken(mockReq, mockRes, mockNext);
+
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({ success: true, message: "Device token unregistered successfully" })
+            );
+
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.deviceTokens).toHaveLength(0);
+        });
+
+        it("should cap device tokens at 10 entries", () => {
+            for (let i = 0; i < 15; i++) {
+                user.addDeviceToken(`token-${i}`, "android");
+            }
+            expect(user.deviceTokens.length).toBe(10);
+            // Keeps the most recently added tokens
+            expect(user.deviceTokens[user.deviceTokens.length - 1].token).toBe("token-14");
+        });
+
+        it("should not duplicate an already-registered token", () => {
+            user.addDeviceToken("device-token-abc", "android");
+            user.addDeviceToken("device-token-abc", "ios");
+            expect(user.deviceTokens).toHaveLength(1);
+            expect(user.deviceTokens[0].platform).toBe("ios");
         });
     });
 

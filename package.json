@@ -20,6 +20,7 @@
     "express": "5.1.0",
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
+    "firebase-admin": "^14.2.0",
     "helmet": "8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.2.1",
@@ -33,6 +34,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-dist": "^5.26.0",
     "swagger-ui-express": "4.3.0",
+    "twilio": "^6.0.2",
     "winston": "^3.19.0",
     "yamljs": "^0.3.0"
   },

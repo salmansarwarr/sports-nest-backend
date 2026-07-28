@@ -196,6 +196,7 @@ const bookingSchema = new mongoose.Schema({
             'cancelled',            // Cancelled by user/admin
             'no-show',              // User didn't show up
             'expired',              // Tentative booking expired
+            'waitlisted',           // Queued for a slot that's currently taken
         ],
         default: 'pending-confirmation',
         index: true,
@@ -733,6 +734,7 @@ bookingSchema.virtual('statusColor').get(function () {
         'cancelled': 'red',
         'no-show': 'orange',
         'expired': 'gray',
+        'waitlisted': 'purple',
     };
     return colors[this.status] || 'gray';
 });
@@ -826,6 +828,61 @@ bookingSchema.statics.updateBookingStatuses = async function () {
             isNoShow: true
         }
     );
+};
+
+/**
+ * Promote the next waitlisted booking for an exact (court, startTime, endTime)
+ * slot once it's free, or just compact queue-position gaps if it's still
+ * occupied. Race-safe against concurrent calls (e.g. the inline call from
+ * cancelBooking racing the cron fallback sweep) via the atomic
+ * status:'waitlisted' filter on the promoting update. Returns the promoted
+ * booking (populated) or null if nothing was promoted.
+ */
+bookingSchema.statics.settleWaitlist = async function (court, startTime, endTime) {
+    const Court = mongoose.model('Court');
+
+    const queue = await this.find({ court, startTime, endTime, status: 'waitlisted' }).sort('waitlistPosition');
+    if (queue.length === 0) {
+        return null;
+    }
+
+    const conflicts = await this.checkConflicts(court, startTime, endTime);
+    if (conflicts.length > 0) {
+        // Slot is still occupied - just compact any position gaps left by
+        // earlier cancellations within the waitlist itself.
+        await Promise.all(queue.map((entry, index) => {
+            if (entry.waitlistPosition !== index + 1) {
+                return this.updateOne({ _id: entry._id }, { waitlistPosition: index + 1 });
+            }
+            return null;
+        }));
+        return null;
+    }
+
+    const courtDoc = await Court.findById(court).populate('venue');
+    if (!courtDoc) {
+        return null;
+    }
+
+    const requiresApproval = courtDoc.bookingSettings.requiresApproval || courtDoc.venue.settings.requiresApproval;
+    const newStatus = requiresApproval ? 'pending-confirmation' : 'confirmed';
+
+    const promoted = await this.findOneAndUpdate(
+        { _id: queue[0]._id, status: 'waitlisted' },
+        { status: newStatus, isWaitlisted: false, waitlistPosition: undefined, requiresApproval },
+        { new: true }
+    ).populate('user court venue');
+
+    if (!promoted) {
+        return null;
+    }
+
+    const remaining = queue.slice(1);
+    await Promise.all(remaining.map((entry, index) =>
+        this.updateOne({ _id: entry._id }, { waitlistPosition: index + 1 })
+    ));
+
+    return promoted;
 };
 
 const Booking = mongoose.model('Booking', bookingSchema);

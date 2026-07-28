@@ -4,6 +4,7 @@ const User = require('../../src/models/User');
 const {
     createCourt,
     getCourts,
+    getRecommendedCourts,
     getCourt,
     updateCourt,
     deleteCourt,
@@ -382,6 +383,63 @@ describe('Court Controller', () => {
 
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.every(c => c.venue._id.toString() === venue._id.toString())).toBe(true);
+        });
+    });
+
+    describe('getRecommendedCourts', () => {
+        beforeEach(async () => {
+            // `court` (outer fixture) is plain/unfeatured/unrated - low score
+            await Court.create({
+                name: 'Featured High-Rated Court',
+                venue: venue._id,
+                sportType: 'tennis',
+                courtType: 'outdoor',
+                baseHourlyRate: 1000,
+                owner: owner._id,
+                isFeatured: true,
+                stats: { averageRating: 4.8, totalReviews: 20 }
+            });
+        });
+
+        it('should rank featured/highly-rated courts above plain ones', async () => {
+            mockReq.query = {};
+
+            await getRecommendedCourts(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBeGreaterThan(0);
+            expect(response.data[0].name).toBe('Featured High-Rated Court');
+        });
+
+        it('should respect the limit query param', async () => {
+            mockReq.query = { limit: '1' };
+
+            await getRecommendedCourts(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBe(1);
+        });
+
+        it('should scope to nearby venues when coordinates are given', async () => {
+            mockReq.query = { latitude: '24.8607', longitude: '67.0011' };
+
+            await getRecommendedCourts(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBeGreaterThan(0);
+        });
+
+        it('should fall back to the global query when no venues are nearby', async () => {
+            // North Pole - nothing is within 15km of this
+            mockReq.query = { latitude: '89.9', longitude: '0' };
+
+            await getRecommendedCourts(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBeGreaterThan(0);
         });
     });
 

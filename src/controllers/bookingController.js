@@ -1,12 +1,13 @@
 const Booking = require('../models/Booking');
 const Court = require('../models/Court');
 const Venue = require('../models/Venue');
+const User = require('../models/User');
 const Payment = require('../models/Payment');
 const PromoCode = require('../models/PromoCode');
 const { validationResult } = require('express-validator');
-const EmailService = require('../utils/email');
 const stripeUtil = require('../utils/stripe');
 const logger = require('../utils/logger');
+const notify = require('../utils/notify');
 
 /**
  * @desc    Create a new booking
@@ -68,17 +69,30 @@ exports.createBooking = async (req, res, next) => {
 
         // Check for booking conflicts
         const conflicts = await Booking.checkConflicts(court, startTime, endTime);
+        let isJoiningWaitlist = false;
+
         if (conflicts.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message: 'Time slot is already booked',
-                conflicts: conflicts.map(c => ({
-                    bookingNumber: c.bookingNumber,
-                    startTime: c.startTime,
-                    endTime: c.endTime,
-                    status: c.status
-                }))
-            });
+            if (!bookingData.joinWaitlist) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Time slot is already booked',
+                    conflicts: conflicts.map(c => ({
+                        bookingNumber: c.bookingNumber,
+                        startTime: c.startTime,
+                        endTime: c.endTime,
+                        status: c.status
+                    }))
+                });
+            }
+
+            if (bookingType === 'recurring') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot join a waitlist for a recurring booking'
+                });
+            }
+
+            isJoiningWaitlist = true;
         }
 
         // Check user's concurrent booking limit
@@ -196,6 +210,13 @@ exports.createBooking = async (req, res, next) => {
             ...bookingData
         });
 
+        if (isJoiningWaitlist) {
+            const waitlistPosition = await Booking.countDocuments({ court, startTime, endTime, status: 'waitlisted' }) + 1;
+            booking.status = 'waitlisted';
+            booking.isWaitlisted = true;
+            booking.waitlistPosition = waitlistPosition;
+        }
+
         // Handle recurring bookings
         if (bookingType === 'recurring' && recurringPattern) {
             if (!courtDoc.bookingSettings.allowRecurringBookings) {
@@ -246,26 +267,30 @@ exports.createBooking = async (req, res, next) => {
             await PromoCode.updateOne({ _id: appliedPromoCode._id }, { $inc: { usedCount: 1 } });
         }
 
-        // Update court statistics
-        courtDoc.stats.totalBookings += 1;
-        await courtDoc.save();
+        if (!isJoiningWaitlist) {
+            // Update court statistics
+            courtDoc.stats.totalBookings += 1;
+            await courtDoc.save();
+        }
 
         // Populate references before sending response
         await booking.populate('user court venue');
 
         if (booking.status === 'confirmed') {
             try {
-                await EmailService.sendBookingConfirmationEmail(req.user, booking);
-            } catch (emailError) {
-                console.error('Failed to send booking confirmation email:', emailError);
+                await notify.bookingConfirmed(req.user, booking);
+            } catch (notifyError) {
+                logger.error('Failed to send booking confirmation notification', { error: notifyError.message });
             }
         }
 
         res.status(201).json({
             success: true,
-            message: booking.requiresApproval
-                ? 'Booking created and awaiting approval'
-                : 'Booking confirmed successfully',
+            message: isJoiningWaitlist
+                ? `Added to waitlist at position ${booking.waitlistPosition}`
+                : booking.requiresApproval
+                    ? 'Booking created and awaiting approval'
+                    : 'Booking confirmed successfully',
             data: booking
         });
     } catch (error) {
@@ -625,9 +650,18 @@ exports.cancelBooking = async (req, res, next) => {
         await booking.save();
 
         try {
-            await EmailService.sendBookingCancellationEmail(booking.user, booking, reason);
-        } catch (emailError) {
-            console.error('Failed to send booking cancellation email:', emailError);
+            await notify.bookingCancelled(booking.user, booking, reason);
+        } catch (notifyError) {
+            logger.error('Failed to send booking cancellation notification', { error: notifyError.message });
+        }
+
+        try {
+            const promoted = await Booking.settleWaitlist(booking.court._id, booking.startTime, booking.endTime);
+            if (promoted) {
+                await notify.waitlistPromoted(promoted.user, promoted);
+            }
+        } catch (waitlistError) {
+            logger.error('Failed to settle waitlist after cancellation', { bookingId: booking._id, error: waitlistError.message });
         }
 
         res.status(200).json({
@@ -772,9 +806,9 @@ exports.approveBooking = async (req, res, next) => {
         await booking.save();
 
         try {
-            await EmailService.sendBookingConfirmationEmail(booking.user, booking);
-        } catch (emailError) {
-            console.error('Failed to send booking confirmation email:', emailError);
+            await notify.bookingConfirmed(booking.user, booking);
+        } catch (notifyError) {
+            logger.error('Failed to send booking confirmation notification', { error: notifyError.message });
         }
 
         res.status(200).json({
@@ -851,9 +885,18 @@ exports.rejectBooking = async (req, res, next) => {
         await booking.save();
 
         try {
-            await EmailService.sendBookingCancellationEmail(booking.user, booking, reason);
-        } catch (emailError) {
-            console.error('Failed to send booking rejection email:', emailError);
+            await notify.bookingCancelled(booking.user, booking, reason);
+        } catch (notifyError) {
+            logger.error('Failed to send booking rejection notification', { error: notifyError.message });
+        }
+
+        try {
+            const promoted = await Booking.settleWaitlist(booking.court._id, booking.startTime, booking.endTime);
+            if (promoted) {
+                await notify.waitlistPromoted(promoted.user, promoted);
+            }
+        } catch (waitlistError) {
+            logger.error('Failed to settle waitlist after rejection', { bookingId: booking._id, error: waitlistError.message });
         }
 
         res.status(200).json({
@@ -1025,6 +1068,192 @@ exports.getMyBookings = async (req, res, next) => {
             currentPage: parseInt(page),
             stats,
             data: bookings
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Invite a participant to a group booking
+ * @route   POST /api/bookings/:id/participants
+ * @access  Private (Booking owner/Group leader)
+ */
+exports.inviteParticipant = async (req, res, next) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                errors: errors.array()
+            });
+        }
+
+        const booking = await Booking.findById(req.params.id);
+        if (!booking) {
+            return res.status(404).json({
+                success: false,
+                message: 'Booking not found'
+            });
+        }
+
+        const isOwner = booking.user.toString() === req.user._id.toString();
+        const isLeader = booking.groupLeader && booking.groupLeader.toString() === req.user._id.toString();
+
+        if (!isOwner && !isLeader) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to invite participants to this booking'
+            });
+        }
+
+        // groupSize includes the leader/owner, so the participant list caps at groupSize - 1
+        if (booking.participants.length >= booking.groupSize - 1) {
+            return res.status(400).json({
+                success: false,
+                message: 'Group is full'
+            });
+        }
+
+        const { user, name, email, phone, paymentShare } = req.body;
+        const participant = { status: 'invited', paymentShare };
+
+        if (user) {
+            const invitedUser = await User.findById(user);
+            if (!invitedUser) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+            participant.user = invitedUser._id;
+            participant.name = `${invitedUser.firstName} ${invitedUser.lastName}`;
+            participant.email = invitedUser.email;
+            participant.phone = invitedUser.phone;
+        } else {
+            participant.name = name;
+            participant.email = email;
+            participant.phone = phone;
+        }
+
+        booking.isGroupBooking = true;
+        booking.participants.push(participant);
+        await booking.save();
+
+        const addedParticipant = booking.participants[booking.participants.length - 1];
+
+        try {
+            await notify.participantInvited(addedParticipant, booking);
+        } catch (notifyError) {
+            logger.error('Failed to send participant invite notification', { error: notifyError.message });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Participant invited successfully',
+            data: booking
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Respond to a group booking invitation (confirm/decline)
+ * @route   POST /api/bookings/:id/participants/:participantId/respond
+ * @access  Private (Participant/Booking owner/Group leader)
+ */
+exports.respondToParticipant = async (req, res, next) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                errors: errors.array()
+            });
+        }
+
+        const booking = await Booking.findById(req.params.id);
+        if (!booking) {
+            return res.status(404).json({
+                success: false,
+                message: 'Booking not found'
+            });
+        }
+
+        const participant = booking.participants.id(req.params.participantId);
+        if (!participant) {
+            return res.status(404).json({
+                success: false,
+                message: 'Participant not found'
+            });
+        }
+
+        const isSelf = participant.user && participant.user.toString() === req.user._id.toString();
+        const isOwner = booking.user.toString() === req.user._id.toString();
+        const isLeader = booking.groupLeader && booking.groupLeader.toString() === req.user._id.toString();
+
+        if (!isSelf && !isOwner && !isLeader) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to respond for this participant'
+            });
+        }
+
+        participant.status = req.body.status;
+        await booking.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Participant status updated successfully',
+            data: booking
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Remove a participant from a group booking
+ * @route   DELETE /api/bookings/:id/participants/:participantId
+ * @access  Private (Participant/Booking owner/Group leader)
+ */
+exports.removeParticipant = async (req, res, next) => {
+    try {
+        const booking = await Booking.findById(req.params.id);
+        if (!booking) {
+            return res.status(404).json({
+                success: false,
+                message: 'Booking not found'
+            });
+        }
+
+        const participant = booking.participants.id(req.params.participantId);
+        if (!participant) {
+            return res.status(404).json({
+                success: false,
+                message: 'Participant not found'
+            });
+        }
+
+        const isSelf = participant.user && participant.user.toString() === req.user._id.toString();
+        const isOwner = booking.user.toString() === req.user._id.toString();
+        const isLeader = booking.groupLeader && booking.groupLeader.toString() === req.user._id.toString();
+
+        if (!isSelf && !isOwner && !isLeader) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to remove this participant'
+            });
+        }
+
+        participant.deleteOne();
+        await booking.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Participant removed successfully',
+            data: booking
         });
     } catch (error) {
         next(error);

@@ -538,6 +538,20 @@ exports.getCourtsQueryValidation = [
         .isFloat({ min: 0, max: 5 }).withMessage('Min rating must be between 0 and 5'),
 ];
 
+exports.getRecommendedCourtsValidation = [
+    query('latitude')
+        .optional()
+        .isFloat({ min: -90, max: 90 }).withMessage('Latitude must be between -90 and 90'),
+
+    query('longitude')
+        .optional()
+        .isFloat({ min: -180, max: 180 }).withMessage('Longitude must be between -180 and 180'),
+
+    query('limit')
+        .optional()
+        .isInt({ min: 1, max: 50 }).withMessage('Limit must be between 1 and 50'),
+];
+
 // ID Parameter Validations
 
 exports.mongoIdValidation = [

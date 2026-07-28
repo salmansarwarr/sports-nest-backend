@@ -11,6 +11,9 @@ const {
     rejectBookingValidation,
     getBookingsQueryValidation,
     mongoIdValidation,
+    addParticipantValidation,
+    respondParticipantValidation,
+    mongoIdAndParticipantIdValidation,
 } = require('../middleware/bookingValidation');
 
 /**
@@ -541,6 +544,67 @@ router.post(
     protect,
     mongoIdValidation,
     bookingController.checkOut
+);
+
+/**
+ * @swagger
+ * /api/bookings/{id}/participants:
+ *   post:
+ *     summary: Invite a participant to a group booking
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Participant invited successfully
+ *       400:
+ *         description: Group is full
+ */
+router.post(
+    '/:id/participants',
+    protect,
+    mongoIdValidation,
+    addParticipantValidation,
+    bookingController.inviteParticipant
+);
+
+/**
+ * @swagger
+ * /api/bookings/{id}/participants/{participantId}/respond:
+ *   post:
+ *     summary: Respond to a group booking invitation
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Participant status updated successfully
+ */
+router.post(
+    '/:id/participants/:participantId/respond',
+    protect,
+    mongoIdAndParticipantIdValidation,
+    respondParticipantValidation,
+    bookingController.respondToParticipant
+);
+
+/**
+ * @swagger
+ * /api/bookings/{id}/participants/{participantId}:
+ *   delete:
+ *     summary: Remove a participant from a group booking
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Participant removed successfully
+ */
+router.delete(
+    '/:id/participants/:participantId',
+    protect,
+    mongoIdAndParticipantIdValidation,
+    bookingController.removeParticipant
 );
 
 module.exports = router;
