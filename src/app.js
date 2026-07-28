@@ -12,6 +12,9 @@ const courtRoutes = require('./routes/courtRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
+const promoCodeRoutes = require('./routes/promoCodeRoutes');
+const paymentController = require('./controllers/paymentController');
 const errorHandler = require('./middleware/errorHandler.js');
 
 const passport = require('passport');
@@ -56,6 +59,12 @@ if (process.env.NODE_ENV !== 'development' && process.env.DISABLE_RATE_LIMIT !==
 
     app.use(globalLimiter);
 }
+
+// Stripe webhook - MUST be mounted before express.json() with a raw body
+// parser, since Stripe signature verification needs the raw request bytes.
+// Do not move this below express.json() or add a duplicate /webhook route
+// inside paymentRoutes.js.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentController.handleWebhook);
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));
@@ -105,7 +114,9 @@ const swaggerOptions = {
             { name: 'Courts', description: 'Court management endpoints' },
             { name: 'Bookings', description: 'Booking management endpoints' },
             { name: 'Reviews', description: 'Court review and rating endpoints' },
-            { name: 'Favorites', description: 'Favorites/wishlist endpoints' }
+            { name: 'Favorites', description: 'Favorites/wishlist endpoints' },
+            { name: 'Payments', description: 'Payment processing, history, and receipts' },
+            { name: 'PromoCodes', description: 'Promotional/coupon code management' }
         ]
     },
     apis: ["./src/routes/*.js"],
@@ -145,6 +156,8 @@ app.use('/api/courts', courtRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/favorites', favoriteRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/promo-codes', promoCodeRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

@@ -1,7 +1,10 @@
+const Stripe = require('stripe');
 const Booking = require('../../src/models/Booking');
 const Court = require('../../src/models/Court');
 const Venue = require('../../src/models/Venue');
 const User = require('../../src/models/User');
+const PromoCode = require('../../src/models/PromoCode');
+const Payment = require('../../src/models/Payment');
 const {
     createBooking,
     getBookings,
@@ -506,6 +509,98 @@ describe('Booking Controller', () => {
         });
     });
 
+    describe('createBooking with promo codes', () => {
+        let promo;
+
+        beforeEach(async () => {
+            promo = await PromoCode.create({
+                code: 'SAVE10',
+                discountType: 'percentage',
+                discountValue: 10,
+                validFrom: new Date(Date.now() - 86400000),
+                validUntil: new Date(Date.now() + 86400000),
+                usageLimitPerUser: 1,
+                createdBy: owner._id
+            });
+        });
+
+        it('should apply a valid promo code and record its usage', async () => {
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                couponCode: 'save10'
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const created = await Booking.findOne({ user: user._id });
+            expect(created.promoCode.toString()).toBe(promo._id.toString());
+            expect(created.pricing.discounts).toEqual(
+                expect.arrayContaining([expect.objectContaining({ type: 'coupon', name: 'SAVE10' })])
+            );
+            expect(created.pricing.totalDiscount).toBeGreaterThan(0);
+
+            const updatedPromo = await PromoCode.findById(promo._id);
+            expect(updatedPromo.usedCount).toBe(1);
+        });
+
+        it('should reject an unknown promo code', async () => {
+            const startTime = getSlotTime(1);
+            const endTime = new Date(startTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: startTime.toISOString(),
+                endTime: endTime.toISOString(),
+                couponCode: 'NOPE'
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+
+        it('should reject a promo code once the per-user usage limit is reached', async () => {
+            const firstStart = getSlotTime(1);
+            const firstEnd = new Date(firstStart.getTime() + 2 * 60 * 60 * 1000);
+
+            await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                promoCode: promo._id,
+                startTime: firstStart,
+                endTime: firstEnd,
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 1800, totalAmount: 1890 },
+                payment: { amount: 1890, currency: 'PKR', status: 'pending' }
+            });
+
+            const secondStart = getSlotTime(2);
+            const secondEnd = new Date(secondStart.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.body = {
+                court: court._id.toString(),
+                startTime: secondStart.toISOString(),
+                endTime: secondEnd.toISOString(),
+                couponCode: 'SAVE10'
+            };
+
+            await createBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+    });
+
     describe('getBookings', () => {
         beforeEach(async () => {
             // Create multiple bookings
@@ -800,6 +895,38 @@ describe('Booking Controller', () => {
                 })
             );
         });
+
+        it('should process a real gateway refund when a succeeded payment exists', async () => {
+            await Payment.create({
+                booking: booking._id,
+                user: user._id,
+                gateway: 'stripe',
+                gatewayPaymentIntentId: 'pi_test_123',
+                amount: 2100,
+                currency: 'PKR',
+                status: 'succeeded'
+            });
+
+            Stripe.__mockRefunds.create.mockClear();
+
+            mockReq.user = user;
+            mockReq.params = { id: booking._id.toString() };
+            mockReq.body = { reason: 'Personal emergency' };
+
+            await cancelBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(Stripe.__mockRefunds.create).toHaveBeenCalledWith(
+                expect.objectContaining({ payment_intent: 'pi_test_123', amount: 210000 })
+            );
+
+            const updatedPayment = await Payment.findOne({ booking: booking._id });
+            expect(updatedPayment.status).toBe('refunded');
+            expect(updatedPayment.refunds).toHaveLength(1);
+
+            const updatedBooking = await Booking.findById(booking._id);
+            expect(updatedBooking.payment.status).toBe('refunded');
+        });
     });
 
     describe('checkAvailability', () => {
@@ -976,6 +1103,38 @@ describe('Booking Controller', () => {
             await rejectBooking(mockReq, mockRes, mockNext);
 
             expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+
+        it('should refund a paid booking on rejection', async () => {
+            booking.isPaid = true;
+            booking.payment.status = 'completed';
+            await booking.save();
+
+            await Payment.create({
+                booking: booking._id,
+                user: user._id,
+                gateway: 'stripe',
+                gatewayPaymentIntentId: 'pi_test_123',
+                amount: 2100,
+                currency: 'PKR',
+                status: 'succeeded'
+            });
+
+            Stripe.__mockRefunds.create.mockClear();
+
+            mockReq.user = owner;
+            mockReq.params = { id: booking._id.toString() };
+            mockReq.body = { reason: 'Court maintenance scheduled' };
+
+            await rejectBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(Stripe.__mockRefunds.create).toHaveBeenCalledWith(
+                expect.objectContaining({ payment_intent: 'pi_test_123', amount: 210000 })
+            );
+
+            const updatedBooking = await Booking.findById(booking._id);
+            expect(updatedBooking.payment.status).toBe('refunded');
         });
     });
 

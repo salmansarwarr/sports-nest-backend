@@ -247,10 +247,25 @@ const bookingSchema = new mongoose.Schema({
             default: 'PKR',
             uppercase: true,
         },
+        // Portion of totalAmount representing a security deposit (informational
+        // only - included in the single normal charge, not a separate hold).
+        depositAmount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
     },
 
     // Payment Information
     payment: paymentInfoSchema,
+
+    // Applied promo code, if any (denormalized ref so per-user usage limits
+    // can be checked with a single indexed query instead of scanning
+    // pricing.discounts, which is presentation data, not a source of truth)
+    promoCode: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'PromoCode',
+    },
 
     // Group Booking
     isGroupBooking: {
@@ -474,6 +489,9 @@ bookingSchema.index({
 
 // Index for recurring bookings
 bookingSchema.index({ parentBooking: 1 });
+
+// Index for per-user promo code usage lookups
+bookingSchema.index({ promoCode: 1, user: 1 });
 
 // Pre-save middleware to auto-calculate duration and generate booking number
 bookingSchema.pre('save', async function (next) {

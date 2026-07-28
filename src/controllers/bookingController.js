@@ -1,8 +1,12 @@
 const Booking = require('../models/Booking');
 const Court = require('../models/Court');
 const Venue = require('../models/Venue');
+const Payment = require('../models/Payment');
+const PromoCode = require('../models/PromoCode');
 const { validationResult } = require('express-validator');
 const EmailService = require('../utils/email');
+const stripeUtil = require('../utils/stripe');
+const logger = require('../utils/logger');
 
 /**
  * @desc    Create a new booking
@@ -101,16 +105,61 @@ exports.createBooking = async (req, res, next) => {
         // Apply discounts if any
         let totalDiscount = 0;
         const discounts = [];
+        let appliedPromoCode = null;
 
         if (bookingData.couponCode) {
-            // TODO: Apply coupon discount
-            // This will be implemented in promotional system
+            const promo = await PromoCode.findOne({ code: bookingData.couponCode.toUpperCase() });
+
+            if (!promo) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid or expired promo code'
+                });
+            }
+
+            const validity = promo.isValidFor(basePrice, court, courtDoc.venue._id);
+            if (!validity.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: validity.reason
+                });
+            }
+
+            const userRedemptions = await Booking.countDocuments({
+                user: req.user._id,
+                promoCode: promo._id,
+                status: { $nin: ['cancelled'] }
+            });
+
+            if (userRedemptions >= promo.usageLimitPerUser) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'You have already used this promo code the maximum number of times'
+                });
+            }
+
+            const couponDiscount = promo.calculateDiscount(basePrice);
+            totalDiscount += couponDiscount;
+            discounts.push({
+                type: 'coupon',
+                name: promo.code,
+                amount: couponDiscount,
+                percentage: promo.discountType === 'percentage' ? promo.discountValue : undefined
+            });
+            appliedPromoCode = promo;
         }
 
         const subtotal = basePrice - totalDiscount;
         const tax = subtotal * 0.05; // 5% tax (can be configured)
         const serviceFee = 0; // Can be configured
         const totalAmount = subtotal + tax + serviceFee;
+
+        // Security deposit (informational - included in the single normal
+        // charge, not a separate hold)
+        let depositAmount = 0;
+        if (courtDoc.venue.settings?.paymentSettings?.requireDeposit) {
+            depositAmount = Math.round(totalAmount * courtDoc.venue.settings.paymentSettings.depositPercentage) / 100;
+        }
 
         // Prepare booking data
         const booking = new Booking({
@@ -120,6 +169,7 @@ exports.createBooking = async (req, res, next) => {
             startTime,
             endTime,
             bookingType: bookingType || 'single',
+            promoCode: appliedPromoCode ? appliedPromoCode._id : undefined,
             pricing: {
                 basePrice,
                 discounts,
@@ -128,7 +178,8 @@ exports.createBooking = async (req, res, next) => {
                 tax,
                 serviceFee,
                 totalAmount,
-                currency: courtDoc.currency
+                currency: courtDoc.currency,
+                depositAmount
             },
             payment: {
                 amount: totalAmount,
@@ -174,6 +225,10 @@ exports.createBooking = async (req, res, next) => {
             booking.recurringBookings = recurringBookings.map(b => b._id);
             await booking.save();
 
+            if (appliedPromoCode) {
+                await PromoCode.updateOne({ _id: appliedPromoCode._id }, { $inc: { usedCount: 1 } });
+            }
+
             return res.status(201).json({
                 success: true,
                 message: 'Recurring booking created successfully',
@@ -186,6 +241,10 @@ exports.createBooking = async (req, res, next) => {
         }
 
         await booking.save();
+
+        if (appliedPromoCode) {
+            await PromoCode.updateOne({ _id: appliedPromoCode._id }, { $inc: { usedCount: 1 } });
+        }
 
         // Update court statistics
         courtDoc.stats.totalBookings += 1;
@@ -560,8 +619,7 @@ exports.cancelBooking = async (req, res, next) => {
         // Update payment status if refund is due
         if (refundInfo.refundEligible && booking.isPaid) {
             booking.payment.refundAmount = refundInfo.refundAmount;
-            // TODO: Process actual refund through payment gateway
-            // booking.payment.status = 'refunded';
+            await processRefund(booking, refundInfo.refundAmount, reason);
         }
 
         await booking.save();
@@ -784,6 +842,11 @@ exports.rejectBooking = async (req, res, next) => {
             refundEligible: true,
             refundPercentage: 100
         };
+
+        if (booking.isPaid) {
+            booking.payment.refundAmount = booking.payment.amount;
+            await processRefund(booking, booking.payment.amount, reason);
+        }
 
         await booking.save();
 
@@ -1029,6 +1092,43 @@ async function generateRecurringBookings(parentBooking, court) {
     }
 
     return recurringBookings;
+}
+
+/**
+ * Refund the succeeded payment for a booking via the gateway, and mirror the
+ * result onto booking.payment. Best-effort: never throws, so a gateway
+ * failure never blocks the cancellation itself - it's logged for manual
+ * reconciliation instead. Callers are responsible for saving `booking`
+ * afterward.
+ */
+async function processRefund(booking, amount, reason) {
+    try {
+        const payment = await Payment.findOne({ booking: booking._id, status: 'succeeded' }).sort('-createdAt');
+        if (!payment || !payment.gatewayPaymentIntentId) {
+            return;
+        }
+
+        const refund = await stripeUtil.createRefund({
+            paymentIntentId: payment.gatewayPaymentIntentId,
+            amount,
+            reason: 'requested_by_customer'
+        });
+
+        payment.refunds.push({
+            gatewayRefundId: refund.id,
+            amount,
+            reason,
+            status: 'succeeded'
+        });
+        payment.status = amount >= payment.amount ? 'refunded' : 'partially-refunded';
+        await payment.save();
+
+        booking.payment.status = payment.status;
+        booking.payment.refundedAt = new Date();
+        booking.payment.refundReason = reason;
+    } catch (error) {
+        logger.error('Failed to process refund', { bookingId: booking._id, error: error.message });
+    }
 }
 
 module.exports = exports;
