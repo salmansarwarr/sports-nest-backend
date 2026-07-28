@@ -35,8 +35,15 @@ const userSchema = new mongoose.Schema(
             required: [true, "Email is required"],
             unique: true,
             lowercase: true,
+            // Deliberately simple (no nested quantifiers) - the previous
+            // pattern (\w+([.-]?\w+)*@...(\.\w{2,3})+) could catastrophically
+            // backtrack (ReDoS) on inputs its TLD group can't match (e.g. any
+            // TLD longer than 3 chars, like ".info" or ".local"), hanging the
+            // single-threaded process for minutes on a single save(). Route-level
+            // express-validator isEmail() (a mature, non-regex library) is the
+            // real validation; this is just a cheap sanity check.
             match: [
-                /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+                /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
                 "Please enter a valid email",
             ],
         },
@@ -148,6 +155,9 @@ const userSchema = new mongoose.Schema(
                 },
             },
         ],
+        // Set on self-service GDPR account deletion (anonymization) - distinct
+        // from an admin merely deactivating an account via isActive:false.
+        deletedAt: Date,
     },
     {
         timestamps: true,

@@ -1,8 +1,14 @@
 const crypto = require('crypto');
 const User = require('../models/User.js');
+const Favorite = require('../models/Favorite.js');
+const Booking = require('../models/Booking.js');
+const Payment = require('../models/Payment.js');
+const Review = require('../models/Review.js');
+const SupportTicket = require('../models/SupportTicket.js');
 const JWTUtils = require('../utils/jwt.js');
 const EmailService = require('../utils/email.js');
 const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary.js');
+const auditLog = require('../utils/auditLog.js');
 
 class AuthController {
     // Register new user
@@ -587,6 +593,113 @@ class AuthController {
             res.json({
                 success: true,
                 message: "Device token unregistered successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Delete (anonymize) own account - GDPR right-to-erasure. Never a hard
+    // delete: Booking/Payment/Review keep their `user` ref for financial and
+    // audit-record integrity, resolving to this now-anonymized document.
+    static async deleteAccount(req, res, next) {
+        try {
+            const { password } = req.body;
+
+            const user = await User.findById(req.user._id).select("+password");
+
+            // Google-only accounts have no password to verify - JWT auth already gated access.
+            if (user.password) {
+                const isPasswordValid = await user.comparePassword(password);
+                if (!isPasswordValid) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Password is incorrect",
+                    });
+                }
+            }
+
+            if (user.profilePicture?.publicId) {
+                try {
+                    await deleteFromCloudinary(user.profilePicture.publicId);
+                } catch (cloudinaryError) {
+                    console.error('Failed to delete profile picture during account deletion:', cloudinaryError);
+                }
+            }
+
+            // NOTE: the domain here must satisfy User.js's email regex TLD
+            // group (\.\w{2,3})+ in a single segment (e.g. .com, .io) - a
+            // TLD like ".local" (5 chars) can't match it and triggers
+            // catastrophic backtracking (ReDoS) that hangs the process.
+            user.email = `deleted-${user._id}@anonymized.com`;
+            user.firstName = "Deleted";
+            user.lastName = "User";
+            user.phone = undefined;
+            user.dateOfBirth = undefined;
+            user.gender = undefined;
+            user.googleId = undefined;
+            user.password = crypto.randomBytes(32).toString("hex");
+            user.profilePicture = { url: undefined, publicId: undefined };
+            user.refreshTokens = [];
+            user.deviceTokens = [];
+            user.recentlyViewed = [];
+            user.preferences.notifications.email = false;
+            user.preferences.notifications.push = false;
+            user.preferences.notifications.whatsapp = false;
+            user.passwordResetToken = undefined;
+            user.passwordResetExpires = undefined;
+            user.emailVerificationToken = undefined;
+            user.emailVerificationExpires = undefined;
+            user.isActive = false;
+            user.deletedAt = new Date();
+
+            await user.save();
+
+            try {
+                await Favorite.deleteMany({ user: user._id });
+            } catch (favoriteError) {
+                console.error('Failed to delete favorites during account deletion:', favoriteError);
+            }
+
+            await auditLog.record({
+                actor: user,
+                action: "user.account_deleted",
+                resourceType: "User",
+                resourceId: user._id,
+                req,
+            });
+
+            res.json({
+                success: true,
+                message: "Your account has been deleted successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+
+    // Self-service GDPR data export
+    static async getDataExport(req, res, next) {
+        try {
+            const [bookings, payments, reviews, favorites, supportTickets] = await Promise.all([
+                Booking.find({ user: req.user._id }).lean(),
+                Payment.find({ user: req.user._id }).lean(),
+                Review.find({ user: req.user._id }).lean(),
+                Favorite.find({ user: req.user._id }).lean(),
+                SupportTicket.find({ user: req.user._id }).lean(),
+            ]);
+
+            res.json({
+                success: true,
+                data: {
+                    profile: req.user.toJSON(),
+                    bookings,
+                    payments,
+                    reviews,
+                    favorites,
+                    supportTickets,
+                    exportedAt: new Date(),
+                },
             });
         } catch (error) {
             next(error);

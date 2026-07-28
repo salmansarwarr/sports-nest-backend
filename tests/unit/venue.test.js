@@ -1,6 +1,7 @@
 const Venue = require('../../src/models/Venue');
 const Court = require('../../src/models/Court');
 const User = require('../../src/models/User');
+const AuditLog = require('../../src/models/AuditLog');
 const {
     createVenue,
     getVenues,
@@ -690,6 +691,9 @@ describe('Venue Controller', () => {
             const verifiedVenue = await Venue.findById(venue._id);
             expect(verifiedVenue.verification.isVerified).toBe(true);
             expect(verifiedVenue.status).toBe('active');
+
+            const auditEntry = await AuditLog.findOne({ action: 'venue.verified', resourceId: venue._id });
+            expect(auditEntry).not.toBeNull();
         });
 
         it('should not verify venue as non-admin', async () => {

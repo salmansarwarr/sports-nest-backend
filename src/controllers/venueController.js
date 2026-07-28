@@ -1,6 +1,7 @@
 const Venue = require('../models/Venue');
 const Court = require('../models/Court');
 const { validationResult } = require('express-validator');
+const auditLog = require('../utils/auditLog');
 
 /**
  * @desc    Create a new venue
@@ -634,6 +635,14 @@ exports.verifyVenue = async (req, res, next) => {
 
         await venue.save();
 
+        await auditLog.record({
+            actor: req.user,
+            action: 'venue.verified',
+            resourceType: 'Venue',
+            resourceId: venue._id,
+            req
+        });
+
         res.status(200).json({
             success: true,
             message: 'Venue verified successfully',
@@ -740,6 +749,15 @@ exports.updateVerificationDocumentStatus = async (req, res, next) => {
 
         document.status = status;
         await venue.save();
+
+        await auditLog.record({
+            actor: req.user,
+            action: 'venue.verification_document_reviewed',
+            resourceType: 'Venue',
+            resourceId: venue._id,
+            changes: { documentId: document._id, status },
+            req
+        });
 
         res.status(200).json({
             success: true,

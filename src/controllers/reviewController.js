@@ -3,6 +3,7 @@ const Booking = require('../models/Booking');
 const Court = require('../models/Court');
 const Venue = require('../models/Venue');
 const { validationResult } = require('express-validator');
+const auditLog = require('../utils/auditLog');
 
 /**
  * @desc    Create a review for a completed booking
@@ -341,6 +342,15 @@ exports.moderateReview = async (req, res, next) => {
 
         await review.save();
         await Review.recalculateCourtStats(review.court);
+
+        await auditLog.record({
+            actor: req.user,
+            action: 'review.moderated',
+            resourceType: 'Review',
+            resourceId: review._id,
+            changes: { status: review.status, moderationReason: review.moderationReason },
+            req
+        });
 
         res.status(200).json({
             success: true,

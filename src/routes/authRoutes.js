@@ -26,6 +26,8 @@ const {
     getRecentlyViewed,
     registerDeviceToken,
     unregisterDeviceToken,
+    deleteAccount,
+    getDataExport,
 } = AuthController;
 
 const {
@@ -38,6 +40,7 @@ const {
     updatePreferencesValidation,
     registerDeviceTokenValidation,
     unregisterDeviceTokenValidation,
+    deleteAccountValidation,
 } = Validation;
 
 const router = express.Router();
@@ -877,5 +880,50 @@ router.post("/device-tokens", authenticate, registerDeviceTokenValidation, regis
  *         description: Authentication required
  */
 router.delete("/device-tokens", authenticate, unregisterDeviceTokenValidation, unregisterDeviceToken);
+
+/**
+ * @swagger
+ * /api/auth/data-export:
+ *   get:
+ *     summary: Export all of the current user's data (GDPR self-service export)
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Data export retrieved successfully
+ *       401:
+ *         description: Authentication required
+ */
+router.get("/data-export", authenticate, getDataExport);
+
+/**
+ * @swagger
+ * /api/auth/account:
+ *   delete:
+ *     summary: Delete (anonymize) the current user's account
+ *     tags: [User Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Account deleted successfully
+ *       400:
+ *         description: Password is incorrect
+ *       401:
+ *         description: Authentication required
+ */
+router.delete("/account", authenticate, deleteAccountValidation, deleteAccount);
 
 module.exports = router;

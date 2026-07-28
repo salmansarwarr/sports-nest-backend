@@ -14,6 +14,11 @@ const reviewRoutes = require('./routes/reviewRoutes');
 const favoriteRoutes = require('./routes/favoriteRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const promoCodeRoutes = require('./routes/promoCodeRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const auditLogRoutes = require('./routes/auditLogRoutes');
+const supportTicketRoutes = require('./routes/supportTicketRoutes');
+const faqRoutes = require('./routes/faqRoutes');
+const legalRoutes = require('./routes/legalRoutes');
 const paymentController = require('./controllers/paymentController');
 const errorHandler = require('./middleware/errorHandler.js');
 
@@ -116,7 +121,12 @@ const swaggerOptions = {
             { name: 'Reviews', description: 'Court review and rating endpoints' },
             { name: 'Favorites', description: 'Favorites/wishlist endpoints' },
             { name: 'Payments', description: 'Payment processing, history, and receipts' },
-            { name: 'PromoCodes', description: 'Promotional/coupon code management' }
+            { name: 'PromoCodes', description: 'Promotional/coupon code management' },
+            { name: 'Analytics', description: 'Revenue, occupancy, and booking analytics' },
+            { name: 'AuditLogs', description: 'Admin audit trail' },
+            { name: 'SupportTickets', description: 'Customer support ticketing' },
+            { name: 'FAQs', description: 'Frequently asked questions' },
+            { name: 'Legal', description: 'Terms of service / privacy policy versioning' }
         ]
     },
     apis: ["./src/routes/*.js"],
@@ -158,6 +168,11 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/promo-codes', promoCodeRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/support-tickets', supportTicketRoutes);
+app.use('/api/faqs', faqRoutes);
+app.use('/api/legal', legalRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

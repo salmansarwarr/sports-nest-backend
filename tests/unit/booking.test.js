@@ -5,6 +5,7 @@ const Venue = require('../../src/models/Venue');
 const User = require('../../src/models/User');
 const PromoCode = require('../../src/models/PromoCode');
 const Payment = require('../../src/models/Payment');
+const AuditLog = require('../../src/models/AuditLog');
 const {
     createBooking,
     getBookings,
@@ -929,6 +930,9 @@ describe('Booking Controller', () => {
 
             const updatedBooking = await Booking.findById(booking._id);
             expect(updatedBooking.payment.status).toBe('refunded');
+
+            const auditEntry = await AuditLog.findOne({ action: 'payment.refunded', resourceId: updatedPayment._id });
+            expect(auditEntry).not.toBeNull();
         });
     });
 

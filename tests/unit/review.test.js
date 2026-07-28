@@ -3,6 +3,7 @@ const Booking = require('../../src/models/Booking');
 const Court = require('../../src/models/Court');
 const Venue = require('../../src/models/Venue');
 const User = require('../../src/models/User');
+const AuditLog = require('../../src/models/AuditLog');
 const {
     createReview,
     getReviews,
@@ -356,6 +357,9 @@ describe('Review Controller', () => {
 
             const updatedCourt = await Court.findById(court._id);
             expect(updatedCourt.stats.totalReviews).toBe(0);
+
+            const auditEntry = await AuditLog.findOne({ action: 'review.moderated', resourceId: review._id });
+            expect(auditEntry).not.toBeNull();
         });
     });
 });

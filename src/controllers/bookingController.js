@@ -8,6 +8,7 @@ const { validationResult } = require('express-validator');
 const stripeUtil = require('../utils/stripe');
 const logger = require('../utils/logger');
 const notify = require('../utils/notify');
+const auditLog = require('../utils/auditLog');
 
 /**
  * @desc    Create a new booking
@@ -644,7 +645,7 @@ exports.cancelBooking = async (req, res, next) => {
         // Update payment status if refund is due
         if (refundInfo.refundEligible && booking.isPaid) {
             booking.payment.refundAmount = refundInfo.refundAmount;
-            await processRefund(booking, refundInfo.refundAmount, reason);
+            await processRefund(booking, refundInfo.refundAmount, reason, req);
         }
 
         await booking.save();
@@ -879,7 +880,7 @@ exports.rejectBooking = async (req, res, next) => {
 
         if (booking.isPaid) {
             booking.payment.refundAmount = booking.payment.amount;
-            await processRefund(booking, booking.payment.amount, reason);
+            await processRefund(booking, booking.payment.amount, reason, req);
         }
 
         await booking.save();
@@ -1330,7 +1331,7 @@ async function generateRecurringBookings(parentBooking, court) {
  * reconciliation instead. Callers are responsible for saving `booking`
  * afterward.
  */
-async function processRefund(booking, amount, reason) {
+async function processRefund(booking, amount, reason, req) {
     try {
         const payment = await Payment.findOne({ booking: booking._id, status: 'succeeded' }).sort('-createdAt');
         if (!payment || !payment.gatewayPaymentIntentId) {
@@ -1355,6 +1356,16 @@ async function processRefund(booking, amount, reason) {
         booking.payment.status = payment.status;
         booking.payment.refundedAt = new Date();
         booking.payment.refundReason = reason;
+
+        await auditLog.record({
+            actor: req?.user,
+            action: 'payment.refunded',
+            resourceType: 'Payment',
+            resourceId: payment._id,
+            changes: { amount, status: payment.status },
+            reason,
+            req
+        });
     } catch (error) {
         logger.error('Failed to process refund', { bookingId: booking._id, error: error.message });
     }

@@ -10,7 +10,9 @@ const {
     forgotPassword, resetPassword, verifyEmail, refreshToken: _refreshToken,
     updateAvatar, getPreferences, updatePreferences, getRecentlyViewed,
     registerDeviceToken, unregisterDeviceToken,
+    deleteAccount, getDataExport,
 } = require("../../src/controllers/authController.js");
+const Favorite = require("../../src/models/Favorite.js");
 const {
     sendWelcomeEmail: _sendWelcomeEmail,
     sendPasswordResetEmail: _sendPasswordResetEmail,
@@ -757,6 +759,80 @@ describe("Auth Controller", () => {
             user.addDeviceToken("device-token-abc", "ios");
             expect(user.deviceTokens).toHaveLength(1);
             expect(user.deviceTokens[0].platform).toBe("ios");
+        });
+    });
+
+    describe("GDPR: Account Deletion & Data Export", () => {
+        let user;
+        beforeEach(async () => {
+            user = await User.create({
+                firstName: "Jane",
+                lastName: "Doe",
+                email: "gdprtest@example.com",
+                password: "Password123!",
+                phone: "+923001234567",
+            });
+            mockReq.user = user;
+        });
+
+        describe("deleteAccount", () => {
+            it("should reject an incorrect password", async () => {
+                mockReq.body = { password: "WrongPassword123!" };
+
+                await deleteAccount(mockReq, mockRes, mockNext);
+
+                expect(mockRes.status).toHaveBeenCalledWith(400);
+                const stillActive = await User.findById(user._id);
+                expect(stillActive.isActive).toBe(true);
+            });
+
+            it("should anonymize the account on correct password", async () => {
+                await Favorite.create({ user: user._id, itemType: "Court", itemId: new (require("mongoose").Types.ObjectId)() });
+                user.addDeviceToken("some-token", "android");
+                await user.save();
+
+                mockReq.body = { password: "Password123!" };
+
+                await deleteAccount(mockReq, mockRes, mockNext);
+
+                expect(mockRes.json).toHaveBeenCalledWith(
+                    expect.objectContaining({ success: true, message: expect.stringContaining("deleted") })
+                );
+
+                const deleted = await User.findById(user._id);
+                expect(deleted.email).toBe(`deleted-${user._id}@anonymized.com`);
+                expect(deleted.firstName).toBe("Deleted");
+                expect(deleted.phone).toBeUndefined();
+                expect(deleted.isActive).toBe(false);
+                expect(deleted.deletedAt).toBeDefined();
+                expect(deleted.refreshTokens).toHaveLength(0);
+                expect(deleted.deviceTokens).toHaveLength(0);
+                expect(deleted.preferences.notifications.email).toBe(false);
+
+                const favorites = await Favorite.find({ user: user._id });
+                expect(favorites).toHaveLength(0);
+            });
+        });
+
+        describe("getDataExport", () => {
+            it("should return the shape of the export with the profile scoped to the user", async () => {
+                await getDataExport(mockReq, mockRes, mockNext);
+
+                expect(mockRes.json).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        success: true,
+                        data: expect.objectContaining({
+                            profile: expect.objectContaining({ email: user.email }),
+                            bookings: expect.any(Array),
+                            payments: expect.any(Array),
+                            reviews: expect.any(Array),
+                            favorites: expect.any(Array),
+                            supportTickets: expect.any(Array),
+                            exportedAt: expect.any(Date),
+                        }),
+                    })
+                );
+            });
         });
     });
 

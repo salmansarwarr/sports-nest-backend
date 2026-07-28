@@ -2,6 +2,7 @@ const PromoCode = require('../../src/models/PromoCode');
 const Court = require('../../src/models/Court');
 const Venue = require('../../src/models/Venue');
 const User = require('../../src/models/User');
+const AuditLog = require('../../src/models/AuditLog');
 const {
     createPromoCode,
     getPromoCodes,
@@ -127,6 +128,9 @@ describe('PromoCode', () => {
             expect(mockRes.status).toHaveBeenCalledWith(201);
             const created = await PromoCode.findOne({ code: 'NEWCODE' });
             expect(created.createdBy.toString()).toBe(admin._id.toString());
+
+            const auditEntry = await AuditLog.findOne({ action: 'promo_code.created', resourceId: created._id });
+            expect(auditEntry).not.toBeNull();
         });
 
         it('should list promo codes', async () => {
@@ -159,6 +163,9 @@ describe('PromoCode', () => {
             expect(mockRes.status).toHaveBeenCalledWith(200);
             const updated = await PromoCode.findById(promo._id);
             expect(updated.isActive).toBe(false);
+
+            const auditEntry = await AuditLog.findOne({ action: 'promo_code.updated', resourceId: promo._id });
+            expect(auditEntry).not.toBeNull();
         });
 
         it('should delete a promo code', async () => {
@@ -175,6 +182,9 @@ describe('PromoCode', () => {
 
             expect(mockRes.status).toHaveBeenCalledWith(200);
             expect(await PromoCode.findById(promo._id)).toBeNull();
+
+            const auditEntry = await AuditLog.findOne({ action: 'promo_code.deleted', resourceId: promo._id });
+            expect(auditEntry).not.toBeNull();
         });
 
         it('should preview a discount via validatePromoCode without mutating usage', async () => {

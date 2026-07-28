@@ -1,6 +1,7 @@
 const PromoCode = require('../models/PromoCode');
 const Court = require('../models/Court');
 const { validationResult } = require('express-validator');
+const auditLog = require('../utils/auditLog');
 
 /**
  * @desc    Create a promo code
@@ -20,6 +21,15 @@ exports.createPromoCode = async (req, res, next) => {
         const promoCode = await PromoCode.create({
             ...req.body,
             createdBy: req.user._id
+        });
+
+        await auditLog.record({
+            actor: req.user,
+            action: 'promo_code.created',
+            resourceType: 'PromoCode',
+            resourceId: promoCode._id,
+            changes: { code: promoCode.code, discountType: promoCode.discountType, discountValue: promoCode.discountValue },
+            req
         });
 
         res.status(201).json({
@@ -127,6 +137,15 @@ exports.updatePromoCode = async (req, res, next) => {
             });
         }
 
+        await auditLog.record({
+            actor: req.user,
+            action: 'promo_code.updated',
+            resourceType: 'PromoCode',
+            resourceId: promoCode._id,
+            changes: updates,
+            req
+        });
+
         res.status(200).json({
             success: true,
             message: 'Promo code updated successfully',
@@ -151,6 +170,15 @@ exports.deletePromoCode = async (req, res, next) => {
                 message: 'Promo code not found'
             });
         }
+
+        await auditLog.record({
+            actor: req.user,
+            action: 'promo_code.deleted',
+            resourceType: 'PromoCode',
+            resourceId: promoCode._id,
+            changes: { code: promoCode.code },
+            req
+        });
 
         res.status(200).json({
             success: true,

@@ -257,6 +257,12 @@ const unregisterDeviceTokenValidation = [
     handleValidationErrors,
 ];
 
+const deleteAccountValidation = [
+    body("password").notEmpty().withMessage("Password is required to delete your account"),
+
+    handleValidationErrors,
+];
+
 module.exports = {
     registerValidation,
     loginValidation,
@@ -267,4 +273,5 @@ module.exports = {
     updatePreferencesValidation,
     registerDeviceTokenValidation,
     unregisterDeviceTokenValidation,
+    deleteAccountValidation,
 };
