@@ -328,7 +328,8 @@ router.get('/google/callback',
       await user.save();
   
       // Return the token as a redirect or JSON (for frontend use)
-      res.redirect(`http://127.0.0.1:5500/index.html?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}`);
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      res.redirect(`${frontendUrl}/auth/google/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}`);
     }
 );
 
