@@ -1,7 +1,7 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const AuthController = require("../controllers/authController.js");
-const { authenticate } = require("../middleware/auth.js");
+const { authenticate, optionalAuthenticate } = require("../middleware/auth.js");
 const Validation = require("../middleware/validation");
 const passport = require("passport");
 const JWTUtils = require("../utils/jwt.js");
@@ -721,7 +721,7 @@ router.post(
  *       400:
  *         description: Invalid or expired verification token
  */
-router.get("/verify-email", verifyEmail);
+router.get("/verify-email", optionalAuthenticate, verifyEmail);
 
 /**
  * @swagger

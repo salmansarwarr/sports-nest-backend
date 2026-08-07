@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const mongoose = require('mongoose');
 const logger = require('./logger');
 
 const jobs = [];
@@ -6,7 +7,15 @@ const jobs = [];
 // Bookings starting within this window get a one-time reminder email.
 const REMINDER_WINDOW_HOURS = 2;
 
+// Skip a run entirely while Mongo is down/reconnecting rather than letting
+// queries sit in the (now unbuffered) driver and reject after a timeout.
+const isDbConnected = () => mongoose.connection.readyState === 1;
+
 const updateBookingStatusesJob = async () => {
+    if (!isDbConnected()) {
+        logger.warn('Skipping updateBookingStatuses: database not connected');
+        return;
+    }
     const Booking = require('../models/Booking');
     try {
         await Booking.updateBookingStatuses();
@@ -16,6 +25,10 @@ const updateBookingStatusesJob = async () => {
 };
 
 const sendBookingRemindersJob = async () => {
+    if (!isDbConnected()) {
+        logger.warn('Skipping sendBookingReminders: database not connected');
+        return;
+    }
     const Booking = require('../models/Booking');
     const notify = require('./notify');
     try {
@@ -52,6 +65,10 @@ const sendBookingRemindersJob = async () => {
  * filter.
  */
 const sweepWaitlistPromotionsJob = async () => {
+    if (!isDbConnected()) {
+        logger.warn('Skipping sweepWaitlistPromotions: database not connected');
+        return;
+    }
     const Booking = require('../models/Booking');
     const notify = require('./notify');
     try {

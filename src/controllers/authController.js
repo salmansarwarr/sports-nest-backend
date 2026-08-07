@@ -650,6 +650,12 @@ class AuthController {
             });
 
             if (!user) {
+                if (req.user && req.user.isEmailVerified) {
+                    return res.status(200).json({
+                        success: true,
+                        message: "Email is already verified",
+                    });
+                }
                 return res.status(400).json({
                     success: false,
                     message: "Invalid or expired verification token",
