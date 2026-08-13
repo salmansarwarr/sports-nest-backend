@@ -1,5 +1,11 @@
 const mongoose = require('mongoose');
 
+const attachmentSchema = new mongoose.Schema({
+    url: { type: String, required: true },
+    publicId: String,
+    filename: String,
+}, { _id: true });
+
 const ticketMessageSchema = new mongoose.Schema({
     sender: {
         type: mongoose.Schema.Types.ObjectId,
@@ -12,6 +18,7 @@ const ticketMessageSchema = new mongoose.Schema({
         required: true,
         maxlength: [2000, 'Message cannot exceed 2000 characters'],
     },
+    attachments: [attachmentSchema],
     createdAt: {
         type: Date,
         default: Date.now,
@@ -49,6 +56,8 @@ const supportTicketSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Booking',
     },
+
+    attachments: [attachmentSchema],
 
     status: {
         type: String,

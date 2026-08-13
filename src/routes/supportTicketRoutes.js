@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supportTicketController = require('../controllers/supportTicketController');
 const { authenticate, authorize } = require('../middleware/auth');
+const { uploadAttachments } = require('../middleware/upload');
 const {
     createTicketValidation,
     addMessageValidation,
@@ -29,7 +30,13 @@ const {
  *       201:
  *         description: Support ticket created successfully
  */
-router.post('/', authenticate, createTicketValidation, supportTicketController.createTicket);
+router.post(
+    '/',
+    authenticate,
+    uploadAttachments.array('attachments', 5),
+    createTicketValidation,
+    supportTicketController.createTicket
+);
 
 /**
  * @swagger
@@ -71,7 +78,14 @@ router.get('/:id', authenticate, mongoIdValidation, supportTicketController.getT
  *       201:
  *         description: Message added successfully
  */
-router.post('/:id/messages', authenticate, mongoIdValidation, addMessageValidation, supportTicketController.addMessage);
+router.post(
+    '/:id/messages',
+    authenticate,
+    uploadAttachments.array('attachments', 5),
+    mongoIdValidation,
+    addMessageValidation,
+    supportTicketController.addMessage
+);
 
 /**
  * @swagger

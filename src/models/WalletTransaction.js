@@ -39,7 +39,7 @@ const walletTransactionSchema = new mongoose.Schema({
     // migration.
     source: {
         type: String,
-        enum: ['booking_payment', 'refund', 'admin_adjustment', 'loyalty_redemption', 'referral_bonus', 'top_up'],
+        enum: ['booking_payment', 'refund', 'admin_adjustment', 'loyalty_redemption', 'referral_bonus', 'top_up', 'reschedule_fee'],
         required: true,
     },
 

@@ -953,6 +953,96 @@ describe('Booking Controller', () => {
 
             expect(mockRes.status).toHaveBeenCalledWith(403);
         });
+
+        it('should not charge a reschedule fee more than 24h before start', async () => {
+            const newStartTime = getSlotTime(3);
+            const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.params = { id: booking._id.toString() };
+            mockReq.body = {
+                startTime: newStartTime.toISOString(),
+                endTime: newEndTime.toISOString()
+            };
+
+            await updateBooking(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.rescheduleFeeInfo.feePercentage).toBe(0);
+            expect(response.data.rescheduleFeeInfo.feeAmount).toBe(0);
+        });
+
+        it('should charge a tiered reschedule fee from the wallet when rescheduling close to start time', async () => {
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000), // 10h out -> 20% tier
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+            await User.findByIdAndUpdate(user._id, { walletBalance: 1000 });
+
+            const newStartTime = getSlotTime(5);
+            const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.params = { id: soonBooking._id.toString() };
+            mockReq.body = {
+                startTime: newStartTime.toISOString(),
+                endTime: newEndTime.toISOString()
+            };
+
+            await updateBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.rescheduleFeeInfo.feePercentage).toBe(20);
+            expect(response.data.rescheduleFeeInfo.feeAmount).toBe(400); // 20% of 2000
+
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.walletBalance).toBe(600); // 1000 - 400
+
+            const ledgerEntry = await WalletTransaction.findOne({ user: user._id, source: 'reschedule_fee' });
+            expect(ledgerEntry).not.toBeNull();
+            expect(ledgerEntry.amount).toBe(400);
+        });
+
+        it('should reject the reschedule with 402 when the wallet cannot cover the fee', async () => {
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000), // 10h out -> 20% tier
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+            await User.findByIdAndUpdate(user._id, { walletBalance: 50 });
+
+            const newStartTime = getSlotTime(5);
+            const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.params = { id: soonBooking._id.toString() };
+            mockReq.body = {
+                startTime: newStartTime.toISOString(),
+                endTime: newEndTime.toISOString()
+            };
+
+            await updateBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(402);
+
+            const unchangedBooking = await Booking.findById(soonBooking._id);
+            expect(unchangedBooking.startTime.toISOString()).toBe(soonBooking.startTime.toISOString());
+
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.walletBalance).toBe(50); // untouched
+        });
     });
 
     describe('cancelBooking', () => {

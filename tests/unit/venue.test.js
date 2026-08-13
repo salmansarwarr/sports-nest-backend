@@ -336,9 +336,10 @@ describe('Venue Controller', () => {
 
     describe('createVenue', () => {
         it('should create venue successfully', async () => {
-            mockReq.user = owner;
+            mockReq.user = admin;
             mockReq.body = {
                 name: 'New Sports Complex',
+                owner: regularUser._id.toString(),
                 address: {
                     street: '456 Second St',
                     city: 'Lahore',
@@ -372,10 +373,11 @@ describe('Venue Controller', () => {
             );
         });
 
-        it('should set owner from authenticated user', async () => {
-            mockReq.user = owner;
+        it('should set owner from the request body', async () => {
+            mockReq.user = admin;
             mockReq.body = {
                 name: 'New Venue',
+                owner: regularUser._id.toString(),
                 address: {
                     street: '789 Third St',
                     city: 'Islamabad',
@@ -398,7 +400,48 @@ describe('Venue Controller', () => {
             await createVenue(mockReq, mockRes, mockNext);
 
             const response = mockRes.json.mock.calls[0][0];
-            expect(response.data.owner.toString()).toBe(owner._id.toString());
+            expect(response.data.owner.toString()).toBe(regularUser._id.toString());
+        });
+
+        it('should reject venue creation without an owner in the body', async () => {
+            mockReq.user = admin;
+            mockReq.body = {
+                name: 'No Owner Venue',
+                address: {
+                    street: '1 Nowhere St',
+                    city: 'Lahore',
+                    state: 'Punjab',
+                    country: 'Pakistan'
+                },
+                location: { type: 'Point', coordinates: [74.3587, 31.5204] },
+                contact: { primaryPhone: '+923001234570', email: 'noowner@example.com' },
+                amenities: { totalCourts: 1 }
+            };
+
+            await createVenue(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+
+        it('should reject a second venue for an owner who already has one', async () => {
+            mockReq.user = admin;
+            mockReq.body = {
+                name: 'Second Venue',
+                owner: owner._id.toString(),
+                address: {
+                    street: '2 Nowhere St',
+                    city: 'Lahore',
+                    state: 'Punjab',
+                    country: 'Pakistan'
+                },
+                location: { type: 'Point', coordinates: [74.3587, 31.5204] },
+                contact: { primaryPhone: '+923001234571', email: 'secondvenue@example.com' },
+                amenities: { totalCourts: 1 }
+            };
+
+            await createVenue(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(409);
         });
     });
 
@@ -462,6 +505,33 @@ describe('Venue Controller', () => {
             expect(response.count).toBeLessThanOrEqual(1);
             expect(response.totalPages).toBeGreaterThanOrEqual(1);
         });
+
+        it('should hide verification documents from the public', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            await venue.save();
+            mockReq.query = {};
+            mockReq.user = null;
+
+            await getVenues(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            const found = response.data.find(v => v._id.toString() === venue._id.toString());
+            expect(found.verification.documents).toBeUndefined();
+        });
+
+        it('should expose verification documents to an admin', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            await venue.save();
+            mockReq.query = {};
+            mockReq.user = admin;
+
+            await getVenues(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            const found = response.data.find(v => v._id.toString() === venue._id.toString());
+            expect(found.verification.documents.length).toBe(1);
+            expect(found.verification.documents[0].type).toBe('business-license');
+        });
     });
 
     describe('getVenue', () => {
@@ -510,6 +580,30 @@ describe('Venue Controller', () => {
                 })
             );
         });
+
+        it('should hide verification documents from the public', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            await venue.save();
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.user = null;
+
+            await getVenue(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.verification.documents).toBeUndefined();
+        });
+
+        it('should expose verification documents to an admin', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            await venue.save();
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.user = admin;
+
+            await getVenue(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.verification.documents.length).toBe(1);
+        });
     });
 
     describe('updateVenue', () => {
@@ -547,8 +641,8 @@ describe('Venue Controller', () => {
     });
 
     describe('deleteVenue', () => {
-        it('should delete venue without courts', async () => {
-            mockReq.user = owner;
+        it('should delete venue without courts as admin', async () => {
+            mockReq.user = admin;
             mockReq.params = { id: venue._id.toString() };
 
             await deleteVenue(mockReq, mockRes, mockNext);
@@ -565,6 +659,18 @@ describe('Venue Controller', () => {
             expect(deletedVenue).toBeNull();
         });
 
+        it('should not allow the venue owner to delete their own venue', async () => {
+            mockReq.user = owner;
+            mockReq.params = { id: venue._id.toString() };
+
+            await deleteVenue(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(403);
+
+            const stillExists = await Venue.findById(venue._id);
+            expect(stillExists).not.toBeNull();
+        });
+
         it('should not delete venue with courts', async () => {
             // Create a court for the venue
             await Court.create({
@@ -576,7 +682,7 @@ describe('Venue Controller', () => {
                 owner: owner._id
             });
 
-            mockReq.user = owner;
+            mockReq.user = admin;
             mockReq.params = { id: venue._id.toString() };
 
             await deleteVenue(mockReq, mockRes, mockNext);
@@ -709,6 +815,32 @@ describe('Venue Controller', () => {
                     message: 'Only admins can verify venues'
                 })
             );
+        });
+
+        it('should reject venue verification and store the reason when status is rejected', async () => {
+            mockReq.user = admin;
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.body = { status: 'rejected', notes: 'Blurry business license document' };
+
+            await verifyVenue(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    success: true,
+                    message: 'Venue verification rejected'
+                })
+            );
+
+            const rejectedVenue = await Venue.findById(venue._id);
+            expect(rejectedVenue.verification.isVerified).toBe(false);
+            expect(rejectedVenue.verification.notes).toBe('Blurry business license document');
+
+            const auditEntry = await AuditLog.findOne({
+                action: 'venue.verification_rejected',
+                resourceId: venue._id
+            });
+            expect(auditEntry).not.toBeNull();
         });
     });
 

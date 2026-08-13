@@ -22,6 +22,7 @@ const auditLogRoutes = require('./routes/auditLogRoutes');
 const supportTicketRoutes = require('./routes/supportTicketRoutes');
 const faqRoutes = require('./routes/faqRoutes');
 const legalRoutes = require('./routes/legalRoutes');
+const userRoutes = require('./routes/userRoutes');
 const paymentController = require('./controllers/paymentController');
 const errorHandler = require('./middleware/errorHandler.js');
 
@@ -182,6 +183,7 @@ app.use('/api/audit-logs', auditLogRoutes);
 app.use('/api/support-tickets', supportTicketRoutes);
 app.use('/api/faqs', faqRoutes);
 app.use('/api/legal', legalRoutes);
+app.use('/api/users', userRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

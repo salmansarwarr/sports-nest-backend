@@ -120,21 +120,27 @@ describe('Wallet Routes E2E Tests', () => {
 
         it('should cover a booking entirely from wallet balance with no payment intent required', async () => {
             await request(app).post('/api/auth/register').send(ownerData);
-            await User.findOneAndUpdate({ email: ownerData.email }, { isEmailVerified: true, role: 'owner' });
+            const ownerUser = await User.findOneAndUpdate(
+                { email: ownerData.email },
+                { isEmailVerified: true, role: 'owner' },
+                { new: true }
+            );
             const ownerLogin = await request(app).post('/api/auth/login').send({ email: ownerData.email, password: ownerData.password });
             const ownerToken = ownerLogin.body.data.tokens.accessToken;
 
             const venueResponse = await request(app)
                 .post('/api/venues')
-                .set('Authorization', `Bearer ${ownerToken}`)
+                .set('Authorization', `Bearer ${adminToken}`)
                 .send({
                     name: 'Wallet Test Complex',
+                    owner: ownerUser._id.toString(),
                     address: { street: '1 Wallet St', city: 'Karachi', state: 'Sindh', country: 'Pakistan', postalCode: '75000' },
                     location: { type: 'Point', coordinates: [67.0011, 24.8607] },
                     contact: { primaryPhone: '+923001112222', email: 'walletvenue@example.com' },
                     amenities: { totalCourts: 5 }
                 });
             const venueId = venueResponse.body.data._id;
+            await require('../../src/models/Venue.js').findByIdAndUpdate(venueId, { status: 'active' });
 
             const courtResponse = await request(app)
                 .post('/api/courts')

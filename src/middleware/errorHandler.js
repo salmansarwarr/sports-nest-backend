@@ -42,8 +42,8 @@ const errorHandler = (err, req, res, next) => {
         error = { message, statusCode: 401 };
     }
 
-    // Multer upload errors
-    if (err.name === "MulterError" || err.message?.includes('Only JPEG, PNG, WEBP, and GIF')) {
+    // Multer upload errors (size/count limits, or our fileFilter rejections)
+    if (err.name === "MulterError" || err.message?.includes('are allowed')) {
         error = { message: err.message, statusCode: 400 };
     }
 

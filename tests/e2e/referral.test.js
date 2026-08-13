@@ -4,7 +4,7 @@ const User = require('../../src/models/User.js');
 const { REFERRER_REWARD, REFERRED_REWARD } = require('../../src/config/referralRewards');
 
 describe('Referral Routes E2E Tests', () => {
-    let referrerToken, referredToken, referredId, ownerToken, adminToken;
+    let referrerToken, referredToken, referredId, ownerToken, ownerId, adminToken;
 
     const referrerData = {
         firstName: 'Referrer', lastName: 'User', email: 'referrer@example.com',
@@ -37,7 +37,12 @@ describe('Referral Routes E2E Tests', () => {
         referrerToken = referrerLogin.body.data.tokens.accessToken;
 
         await request(app).post('/api/auth/register').send(ownerData);
-        await User.findOneAndUpdate({ email: ownerData.email }, { isEmailVerified: true, role: 'owner' });
+        const ownerUser = await User.findOneAndUpdate(
+            { email: ownerData.email },
+            { isEmailVerified: true, role: 'owner' },
+            { new: true }
+        );
+        ownerId = ownerUser._id.toString();
         const ownerLogin = await request(app).post('/api/auth/login').send({ email: ownerData.email, password: ownerData.password });
         ownerToken = ownerLogin.body.data.tokens.accessToken;
 
@@ -77,15 +82,17 @@ describe('Referral Routes E2E Tests', () => {
 
             const venueResponse = await request(app)
                 .post('/api/venues')
-                .set('Authorization', `Bearer ${ownerToken}`)
+                .set('Authorization', `Bearer ${adminToken}`)
                 .send({
                     name: 'Referral Test Complex',
+                    owner: ownerId,
                     address: { street: '1 Referral St', city: 'Karachi', state: 'Sindh', country: 'Pakistan', postalCode: '75000' },
                     location: { type: 'Point', coordinates: [67.0011, 24.8607] },
                     contact: { primaryPhone: '+923001112222', email: 'referralvenue@example.com' },
                     amenities: { totalCourts: 5 }
                 });
             const venueId = venueResponse.body.data._id;
+            await require('../../src/models/Venue.js').findByIdAndUpdate(venueId, { status: 'active' });
 
             const courtResponse = await request(app)
                 .post('/api/courts')

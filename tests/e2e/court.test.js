@@ -7,10 +7,22 @@ const Court = require('../../src/models/Court.js');
 
 describe('Court Routes E2E Tests', () => {
     let server;
+    let adminToken;
     let ownerToken;
     let userToken;
     let venueId;
     let courtId;
+
+    const adminData = {
+        firstName: 'Court',
+        lastName: 'Admin',
+        email: 'courtadmin@example.com',
+        password: 'Password123!',
+        confirmPassword: 'Password123!',
+        phone: '+1111111112',
+        dateOfBirth: '1975-01-01',
+        gender: 'male'
+    };
 
     const ownerData = {
         firstName: 'Court',
@@ -92,11 +104,24 @@ describe('Court Routes E2E Tests', () => {
     });
 
     beforeEach(async () => {
+        // Setup Admin
+        await request(app).post('/api/auth/register').send(adminData);
+        await User.findOneAndUpdate(
+            { email: adminData.email },
+            { isEmailVerified: true, role: 'admin' }
+        );
+        const adminLogin = await request(app).post('/api/auth/login').send({
+            email: adminData.email,
+            password: adminData.password
+        });
+        adminToken = adminLogin.body.data.tokens.accessToken;
+
         // Setup Owner
         await request(app).post('/api/auth/register').send(ownerData);
-        await User.findOneAndUpdate(
+        const ownerUser = await User.findOneAndUpdate(
             { email: ownerData.email },
-            { isEmailVerified: true, role: 'owner' }
+            { isEmailVerified: true, role: 'owner' },
+            { new: true }
         );
         const ownerLogin = await request(app).post('/api/auth/login').send({
             email: ownerData.email,
@@ -116,13 +141,14 @@ describe('Court Routes E2E Tests', () => {
         });
         userToken = userLogin.body.data.tokens.accessToken;
 
-        // Create Venue
+        // Create Venue (admin-only; assigned to the owner)
         const venueResponse = await request(app)
             .post('/api/venues')
-            .set('Authorization', `Bearer ${ownerToken}`)
-            .send(venueData);
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ ...venueData, owner: ownerUser._id.toString() });
 
         venueId = venueResponse.body.data._id;
+        await Venue.findByIdAndUpdate(venueId, { status: 'active' });
     });
 
     describe('POST /api/courts', () => {

@@ -111,6 +111,7 @@ const {
 router.post(
     '/',
     authenticate,
+    authorize('admin'),
     createVenueValidation,
     venueController.createVenue
 );
@@ -174,6 +175,7 @@ router.post(
  */
 router.get(
     '/',
+    optionalAuthenticate,
     getVenuesQueryValidation,
     venueController.getVenues
 );
@@ -333,7 +335,7 @@ router.put(
 router.delete(
     '/:id',
     authenticate,
-    authorize('owner', 'admin'),
+    authorize('admin'),
     mongoIdValidation,
     venueController.deleteVenue
 );

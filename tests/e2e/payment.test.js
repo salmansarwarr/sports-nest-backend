@@ -5,12 +5,18 @@ const User = require('../../src/models/User.js');
 const Booking = require('../../src/models/Booking.js');
 
 describe('Payment Routes E2E Tests', () => {
-    let ownerToken, userToken, venueId, courtId, bookingId;
+    let ownerToken, userToken, adminToken, venueId, courtId, bookingId;
 
     const ownerData = {
         firstName: 'Payment', lastName: 'Owner', email: 'paymentowner@example.com',
         password: 'Password123!', confirmPassword: 'Password123!',
         phone: '+1234567890', dateOfBirth: '1985-01-01', gender: 'male', role: 'owner'
+    };
+
+    const adminData = {
+        firstName: 'Payment', lastName: 'Admin', email: 'paymentadmin@example.com',
+        password: 'Password123!', confirmPassword: 'Password123!',
+        phone: '+1122334455', dateOfBirth: '1980-01-01', gender: 'male'
     };
 
     const userData = {
@@ -40,7 +46,11 @@ describe('Payment Routes E2E Tests', () => {
 
     beforeEach(async () => {
         await request(app).post('/api/auth/register').send(ownerData);
-        await User.findOneAndUpdate({ email: ownerData.email }, { isEmailVerified: true, role: 'owner' });
+        const ownerUser = await User.findOneAndUpdate(
+            { email: ownerData.email },
+            { isEmailVerified: true, role: 'owner' },
+            { new: true }
+        );
         const ownerLogin = await request(app).post('/api/auth/login').send({ email: ownerData.email, password: ownerData.password });
         ownerToken = ownerLogin.body.data.tokens.accessToken;
 
@@ -49,11 +59,17 @@ describe('Payment Routes E2E Tests', () => {
         const userLogin = await request(app).post('/api/auth/login').send({ email: userData.email, password: userData.password });
         userToken = userLogin.body.data.tokens.accessToken;
 
+        await request(app).post('/api/auth/register').send(adminData);
+        await User.findOneAndUpdate({ email: adminData.email }, { isEmailVerified: true, role: 'admin' });
+        const adminLogin = await request(app).post('/api/auth/login').send({ email: adminData.email, password: adminData.password });
+        adminToken = adminLogin.body.data.tokens.accessToken;
+
         const venueResponse = await request(app)
             .post('/api/venues')
-            .set('Authorization', `Bearer ${ownerToken}`)
-            .send(venueData);
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ ...venueData, owner: ownerUser._id.toString() });
         venueId = venueResponse.body.data._id;
+        await require('../../src/models/Venue.js').findByIdAndUpdate(venueId, { status: 'active' });
 
         const courtResponse = await request(app)
             .post('/api/courts')

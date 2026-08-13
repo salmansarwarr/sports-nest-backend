@@ -1,6 +1,7 @@
 const SupportTicket = require('../../src/models/SupportTicket');
 const User = require('../../src/models/User');
 const AuditLog = require('../../src/models/AuditLog');
+const { uploadToCloudinary: _uploadToCloudinary } = require('../../src/utils/cloudinary');
 const {
     createTicket,
     getTickets,
@@ -8,6 +9,15 @@ const {
     addMessage,
     updateTicketStatus,
 } = require('../../src/controllers/supportTicketController');
+
+// Mock Cloudinary so attachment-upload tests never hit the network
+jest.mock('../../src/utils/cloudinary', () => ({
+    uploadToCloudinary: jest.fn().mockResolvedValue({
+        secure_url: 'https://res.cloudinary.com/test/attachment.png',
+        public_id: 'sports-nest/support-tickets/test123',
+    }),
+    deleteFromCloudinary: jest.fn().mockResolvedValue({ result: 'ok' }),
+}));
 
 describe('Support Ticket Controller', () => {
     let mockReq, mockRes, mockNext;
@@ -34,6 +44,21 @@ describe('Support Ticket Controller', () => {
             const ticket = await SupportTicket.findOne({ user: user._id });
             expect(ticket.category).toBe('refund-dispute');
             expect(ticket.status).toBe('open');
+        });
+
+        it('should upload and attach files to a new ticket', async () => {
+            _uploadToCloudinary.mockClear();
+            mockReq.user = user;
+            mockReq.body = { subject: 'Broken court light', category: 'other', description: 'See attached photo.' };
+            mockReq.files = [{ buffer: Buffer.from('fake-image-data'), originalname: 'court.png' }];
+
+            await createTicket(mockReq, mockRes, mockNext);
+
+            expect(_uploadToCloudinary).toHaveBeenCalledTimes(1);
+            const ticket = await SupportTicket.findOne({ user: user._id });
+            expect(ticket.attachments.length).toBe(1);
+            expect(ticket.attachments[0].url).toBe('https://res.cloudinary.com/test/attachment.png');
+            expect(ticket.attachments[0].filename).toBe('court.png');
         });
     });
 
@@ -86,6 +111,23 @@ describe('Support Ticket Controller', () => {
             const updated = await SupportTicket.findById(ticket._id);
             expect(updated.messages).toHaveLength(1);
             expect(updated.status).toBe('open');
+        });
+
+        it('should upload and attach files to a reply', async () => {
+            _uploadToCloudinary.mockClear();
+            const ticket = await SupportTicket.create({ user: user._id, subject: 'Broken light', description: 'desc' });
+
+            mockReq.user = user;
+            mockReq.params = { id: ticket._id.toString() };
+            mockReq.body = { message: 'Here is another photo' };
+            mockReq.files = [{ buffer: Buffer.from('fake-image-data'), originalname: 'follow-up.png' }];
+
+            await addMessage(mockReq, mockRes, mockNext);
+
+            expect(_uploadToCloudinary).toHaveBeenCalledTimes(1);
+            const updated = await SupportTicket.findById(ticket._id);
+            expect(updated.messages[0].attachments.length).toBe(1);
+            expect(updated.messages[0].attachments[0].filename).toBe('follow-up.png');
         });
 
         it('should reject a message from an unrelated user', async () => {

@@ -18,12 +18,35 @@ exports.createVenue = async (req, res, next) => {
             });
         }
 
-        // Set owner from authenticated user if not admin
+        // Admin must supply an owner userId in the request body
+        const ownerId = req.body.owner;
+        if (!ownerId) {
+            return res.status(400).json({
+                success: false,
+                message: 'owner (userId) is required when creating a venue as admin'
+            });
+        }
+
+        // Enforce one venue per owner
+        const existingVenue = await Venue.findOne({ owner: ownerId });
+        if (existingVenue) {
+            return res.status(409).json({
+                success: false,
+                message: 'This user already owns a venue. Each owner may only manage one venue.'
+            });
+        }
+
         const venueData = {
             ...req.body,
-            owner: req.user.role === 'admin' && req.body.owner ? req.body.owner : req.user._id
+            owner: ownerId,
+            // Admin-created venues are immediately active and pre-verified
+            status: 'active',
+            verification: {
+                isVerified: true,
+                verifiedAt: new Date(),
+                verifiedBy: req.user._id,
+            },
         };
-
         const venue = await Venue.create(venueData);
 
         res.status(201).json({
@@ -84,9 +107,14 @@ exports.getVenues = async (req, res, next) => {
             };
         }
 
-        // Text search
+        // Text / keyword search
         if (search) {
-            query.$text = { $search: search };
+            query.$or = [
+                { name: new RegExp(search, 'i') },
+                { description: new RegExp(search, 'i') },
+                { 'address.city': new RegExp(search, 'i') },
+                { tags: new RegExp(search, 'i') },
+            ];
         }
 
         // Address filters
@@ -107,11 +135,18 @@ exports.getVenues = async (req, res, next) => {
             query['stats.averageRating'] = { $gte: parseFloat(minRating) };
         }
 
-        // Amenities filter
+        // Amenities filter. Most amenity fields are plain booleans
+        // (amenities.<key> === true), but parking/lockers/wifi are nested
+        // objects ({ available, ... }), so they need to be matched on their
+        // `available` sub-field instead.
         if (amenities) {
+            const nestedAvailabilityAmenities = new Set(['parking', 'lockers', 'wifi']);
             const amenitiesList = Array.isArray(amenities) ? amenities : amenities.split(',');
             amenitiesList.forEach(amenity => {
-                query[`amenities.${amenity}`] = true;
+                const key = nestedAvailabilityAmenities.has(amenity)
+                    ? `amenities.${amenity}.available`
+                    : `amenities.${amenity}`;
+                query[key] = true;
             });
         }
 
@@ -127,14 +162,22 @@ exports.getVenues = async (req, res, next) => {
         // Pagination
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
+        // Verification documents are only exposed to admins (needed to review
+        // submissions in the verification queue) — hidden from the public.
+        const isAdmin = Boolean(req.user && req.user.role === 'admin');
+
         // Execute query
-        const venues = await Venue.find(query)
+        let venuesQuery = Venue.find(query)
             .populate('owner', 'firstName lastName email profilePicture')
-            .select('-verification.documents')
             .sort(sortBy)
             .skip(skip)
-            .limit(parseInt(limit))
-            .lean();
+            .limit(parseInt(limit));
+
+        if (!isAdmin) {
+            venuesQuery = venuesQuery.select('-verification.documents');
+        }
+
+        const venues = await venuesQuery.lean();
 
         // Get total count for pagination
         const total = await Venue.countDocuments(query);
@@ -161,13 +204,19 @@ exports.getVenue = async (req, res, next) => {
     try {
         const { id } = req.params;
 
+        // Verification documents are only exposed to admins and the venue's
+        // own owner (needed to review/track submissions) — hidden from the
+        // public.
+        const isAdmin = Boolean(req.user && req.user.role === 'admin');
+        const documentsSelect = isAdmin ? '' : '-verification.documents';
+
         // Try to find by ID first if it's a valid ObjectId
         let venue;
         if (id.match(/^[0-9a-fA-F]{24}$/)) {
             venue = await Venue.findById(id)
                 .populate('owner', 'firstName lastName email profilePicture')
                 .populate('managers', 'firstName lastName email')
-                .select('-verification.documents');
+                .select(documentsSelect);
         }
 
         // If not found by ID or ID was invalid, try by slug
@@ -175,7 +224,7 @@ exports.getVenue = async (req, res, next) => {
             venue = await Venue.findOne({ slug: id })
                 .populate('owner', 'firstName lastName email profilePicture')
                 .populate('managers', 'firstName lastName email')
-                .select('-verification.documents');
+                .select(documentsSelect);
         }
 
         if (!venue) {
@@ -302,11 +351,8 @@ exports.deleteVenue = async (req, res, next) => {
             });
         }
 
-        // Check authorization
-        const isOwner = venue.owner.toString() === req.user._id.toString();
-        const isAdmin = req.user.role === 'admin';
-
-        if (!isOwner && !isAdmin) {
+        // Check authorization — deletion is admin-only per platform policy
+        if (req.user.role !== 'admin') {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to delete this venue'
@@ -624,12 +670,16 @@ exports.verifyVenue = async (req, res, next) => {
             });
         }
 
-        venue.verification.isVerified = true;
+        const { status, notes } = req.body;
+        const isApproved = status !== 'rejected';
+
+        venue.verification.isVerified = isApproved;
         venue.verification.verifiedAt = new Date();
         venue.verification.verifiedBy = req.user._id;
+        if (notes) venue.verification.notes = notes;
 
-        // Also activate the venue if it was pending
-        if (venue.status === 'pending-verification') {
+        // Also activate the venue if it was pending and got approved
+        if (isApproved && venue.status === 'pending-verification') {
             venue.status = 'active';
         }
 
@@ -637,15 +687,16 @@ exports.verifyVenue = async (req, res, next) => {
 
         await auditLog.record({
             actor: req.user,
-            action: 'venue.verified',
+            action: isApproved ? 'venue.verified' : 'venue.verification_rejected',
             resourceType: 'Venue',
             resourceId: venue._id,
+            reason: notes,
             req
         });
 
         res.status(200).json({
             success: true,
-            message: 'Venue verified successfully',
+            message: isApproved ? 'Venue verified successfully' : 'Venue verification rejected',
             data: venue
         });
     } catch (error) {
@@ -660,7 +711,23 @@ exports.verifyVenue = async (req, res, next) => {
  */
 exports.addVerificationDocument = async (req, res, next) => {
     try {
-        const { type, url, publicId } = req.body;
+        let type = req.body.type || req.body.documentType;
+        let url = req.body.url || req.body.documentUrl;
+        let publicId = req.body.publicId;
+
+        if ((!type || !url) && Array.isArray(req.body.documents) && req.body.documents.length > 0) {
+            const doc = req.body.documents[0];
+            type = doc.type || doc.documentType;
+            url = doc.url || doc.documentUrl;
+            publicId = doc.publicId;
+        }
+
+        if (type) {
+            type = type.replace(/_/g, '-');
+            if (type === 'ownership-deed') type = 'ownership-proof';
+            if (type === 'tax-registration') type = 'tax-document';
+            if (type === 'utility-bill') type = 'other';
+        }
 
         if (!type || !url) {
             return res.status(400).json({
@@ -791,8 +858,9 @@ exports.getMyVenues = async (req, res, next) => {
 
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
+        // Owners viewing their own venue(s) should see their own uploaded
+        // verification documents and review status.
         const venues = await Venue.find(query)
-            .select('-verification.documents')
             .sort(sortBy)
             .skip(skip)
             .limit(parseInt(limit))

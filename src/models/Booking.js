@@ -704,6 +704,35 @@ bookingSchema.methods.calculateCancellationRefund = function () {
     };
 };
 
+// Instance method to compute the reschedule fee, tiered by how close to the
+// booking start time the reschedule request is made. Mirrors the
+// cancellation refund tiers above, just framed as a fee instead of a refund.
+// Free (0%) more than 24h out; the fee climbs as the start time nears, and
+// canBeModified() already blocks rescheduling within 2h of start.
+bookingSchema.methods.calculateRescheduleFee = function () {
+    const now = new Date();
+    const hoursUntilBooking = (this.startTime - now) / (1000 * 60 * 60);
+
+    let feePercentage = 0;
+    if (hoursUntilBooking >= 24) {
+        feePercentage = 0;
+    } else if (hoursUntilBooking >= 12) {
+        feePercentage = 10;
+    } else if (hoursUntilBooking >= 6) {
+        feePercentage = 20;
+    } else {
+        feePercentage = 30;
+    }
+
+    const feeAmount = Math.round((this.pricing.totalAmount * feePercentage) / 100 * 100) / 100;
+
+    return {
+        feePercentage,
+        feeAmount,
+        hoursUntilBooking: Math.round(hoursUntilBooking * 10) / 10,
+    };
+};
+
 // Instance method to check if booking can be modified
 bookingSchema.methods.canBeModified = function () {
     const now = new Date();

@@ -1,6 +1,19 @@
 const SupportTicket = require('../models/SupportTicket');
 const { validationResult } = require('express-validator');
 const auditLog = require('../utils/auditLog');
+const { uploadToCloudinary } = require('../utils/cloudinary');
+
+async function uploadAttachmentFiles(files) {
+    if (!files || files.length === 0) return [];
+    const uploaded = await Promise.all(
+        files.map((file) => uploadToCloudinary(file.buffer, { folder: 'sports-nest/support-tickets' }))
+    );
+    return uploaded.map((result, i) => ({
+        url: result.secure_url,
+        publicId: result.public_id,
+        filename: files[i].originalname,
+    }));
+}
 
 /**
  * @desc    Create a support ticket
@@ -18,13 +31,15 @@ exports.createTicket = async (req, res, next) => {
         }
 
         const { subject, category, description, relatedBooking } = req.body;
+        const attachments = await uploadAttachmentFiles(req.files);
 
         const ticket = await SupportTicket.create({
             user: req.user._id,
             subject,
             category,
             description,
-            relatedBooking
+            relatedBooking,
+            attachments
         });
 
         res.status(201).json({
@@ -141,10 +156,13 @@ exports.addMessage = async (req, res, next) => {
             });
         }
 
+        const attachments = await uploadAttachmentFiles(req.files);
+
         ticket.messages.push({
             sender: req.user._id,
             senderRole: req.user.role,
-            message: req.body.message
+            message: req.body.message,
+            attachments
         });
 
         // Reopen a resolved/closed ticket if the user replies again

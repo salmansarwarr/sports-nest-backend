@@ -560,6 +560,7 @@ exports.updateBooking = async (req, res, next) => {
         }
 
         const { startTime, endTime, ...otherUpdates } = req.body;
+        let rescheduleFeeInfo = null;
 
         // If rescheduling (changing time)
         if (startTime || endTime) {
@@ -601,13 +602,35 @@ exports.updateBooking = async (req, res, next) => {
                 groupSize: booking.groupSize
             });
 
+            // Reschedule fee, tiered by how close to the (current) start
+            // time this request is — free >24h out, otherwise charged from
+            // the user's wallet. Computed against the booking's current
+            // start time, before it's overwritten below.
+            const { feePercentage, feeAmount } = booking.calculateRescheduleFee();
+            rescheduleFeeInfo = { feePercentage, feeAmount };
+            if (feeAmount > 0) {
+                const debitedUser = await User.debitWallet(req.user._id, feeAmount, {
+                    source: 'reschedule_fee',
+                    booking: booking._id,
+                    description: `Reschedule fee (${feePercentage}%) for booking ${booking.bookingNumber}`
+                });
+
+                if (!debitedUser) {
+                    return res.status(402).json({
+                        success: false,
+                        message: `Rescheduling this close to the start time requires a ${feePercentage}% fee (${feeAmount} ${booking.pricing.currency}), and your wallet balance is insufficient to cover it. Top up your wallet or choose a slot further out.`
+                    });
+                }
+            }
+
             // Update modification history
             booking.modificationHistory.push({
                 modifiedBy: req.user._id,
                 changes: {
                     startTime: { from: booking.startTime, to: newStartTime },
                     endTime: { from: booking.endTime, to: newEndTime },
-                    price: { from: booking.pricing.totalAmount, to: newPrice }
+                    price: { from: booking.pricing.totalAmount, to: newPrice },
+                    rescheduleFee: { percentage: feePercentage, amount: feeAmount }
                 },
                 reason: req.body.modificationReason || 'Rescheduled'
             });
@@ -631,7 +654,10 @@ exports.updateBooking = async (req, res, next) => {
         res.status(200).json({
             success: true,
             message: 'Booking updated successfully',
-            data: booking
+            data: {
+                booking,
+                rescheduleFeeInfo
+            }
         });
     } catch (error) {
         next(error);
@@ -981,10 +1007,18 @@ exports.checkIn = async (req, res, next) => {
         }
 
         // Check authorization
-        const isOwner = booking.user.toString() === req.user._id.toString();
-        const isStaff = req.user.role === 'manager' || req.user.role === 'admin';
+        const isBookingUser = booking.user.toString() === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin';
+        let isVenueStaff = false;
+        if (!isBookingUser && !isAdmin && (req.user.role === 'owner' || req.user.role === 'manager')) {
+            const venue = await Venue.findById(booking.venue).select('owner managers');
+            isVenueStaff = Boolean(venue) && (
+                venue.owner.toString() === req.user._id.toString() ||
+                venue.managers.some(m => m.toString() === req.user._id.toString())
+            );
+        }
 
-        if (!isOwner && !isStaff) {
+        if (!isBookingUser && !isAdmin && !isVenueStaff) {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to check-in'
@@ -1045,10 +1079,18 @@ exports.checkOut = async (req, res, next) => {
         }
 
         // Check authorization
-        const isOwner = booking.user.toString() === req.user._id.toString();
-        const isStaff = req.user.role === 'manager' || req.user.role === 'admin';
+        const isBookingUser = booking.user.toString() === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin';
+        let isVenueStaff = false;
+        if (!isBookingUser && !isAdmin && (req.user.role === 'owner' || req.user.role === 'manager')) {
+            const venue = await Venue.findById(booking.venue).select('owner managers');
+            isVenueStaff = Boolean(venue) && (
+                venue.owner.toString() === req.user._id.toString() ||
+                venue.managers.some(m => m.toString() === req.user._id.toString())
+            );
+        }
 
-        if (!isOwner && !isStaff) {
+        if (!isBookingUser && !isAdmin && !isVenueStaff) {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to check-out'
