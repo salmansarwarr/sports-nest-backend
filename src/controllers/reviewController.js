@@ -6,7 +6,7 @@ const { validationResult } = require('express-validator');
 const auditLog = require('../utils/auditLog');
 
 /**
- * @desc    Create a review for a completed booking
+ * @desc    Create a review for a completed or cancelled booking
  * @route   POST /api/reviews
  * @access  Private
  */
@@ -37,10 +37,10 @@ exports.createReview = async (req, res, next) => {
             });
         }
 
-        if (booking.status !== 'completed') {
+        if (booking.status !== 'completed' && booking.status !== 'cancelled') {
             return res.status(400).json({
                 success: false,
-                message: 'Only completed bookings can be reviewed'
+                message: 'Only completed or cancelled bookings can be reviewed'
             });
         }
 

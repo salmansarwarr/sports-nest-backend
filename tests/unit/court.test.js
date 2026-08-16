@@ -278,6 +278,34 @@ describe('Court Controller', () => {
                     })
                 })
             );
+
+            // A court with no operating hours can never have any bookable
+            // slots, so creation must default to a real 7-day schedule.
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.operatingHours).toHaveLength(7);
+            expect(response.data.operatingHours[0]).toEqual(
+                expect.objectContaining({ dayOfWeek: 0, openTime: '08:00', closeTime: '22:00', isClosed: false }),
+            );
+        });
+
+        it('should respect explicit operating hours when provided', async () => {
+            mockReq.user = owner;
+            mockReq.body = {
+                name: 'Custom Hours Court',
+                venue: venue._id.toString(),
+                sportType: 'badminton',
+                courtType: 'indoor',
+                baseHourlyRate: 800,
+                operatingHours: [
+                    { dayOfWeek: 1, openTime: '10:00', closeTime: '18:00', isClosed: false }
+                ]
+            };
+
+            await createCourt(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.operatingHours).toHaveLength(1);
+            expect(response.data.operatingHours[0].openTime).toBe('10:00');
         });
 
         it('should not create court for non-existent venue', async () => {
@@ -692,6 +720,19 @@ describe('Court Controller', () => {
                     })
                 })
             );
+
+            // Regression guard: the breakdown fields the frontend's price
+            // quote UI actually renders must be real numbers, never NaN/undefined.
+            const response = mockRes.json.mock.calls[0][0];
+            const { data } = response;
+            expect(data.baseAmount).toBe(2000); // 1000/hr * 2 hours, no pricing rule applies
+            expect(data.peakAdjustment).toBe(0);
+            expect(data.groupAdjustment).toBe(0);
+            expect(data.subtotal).toBe(2000);
+            expect(data.taxes).toBe(100); // 5% of 2000
+            expect(data.totalAmount).toBe(2100);
+            expect(Number.isNaN(data.totalAmount)).toBe(false);
+            expect(Array.isArray(data.breakdown)).toBe(true);
         });
     });
 

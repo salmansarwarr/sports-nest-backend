@@ -356,7 +356,8 @@ describe('Venue Controller', () => {
                 },
                 amenities: {
                     totalCourts: 8
-                }
+                },
+                documents: [{ type: 'business-license', url: 'https://x.test/license.pdf' }]
             };
 
             await createVenue(mockReq, mockRes, mockNext);
@@ -371,6 +372,10 @@ describe('Venue Controller', () => {
                     })
                 })
             );
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.verification.documents).toHaveLength(1);
+            expect(response.data.verification.documents[0].status).toBe('approved');
         });
 
         it('should set owner from the request body', async () => {
@@ -394,13 +399,35 @@ describe('Venue Controller', () => {
                 },
                 amenities: {
                     totalCourts: 3
-                }
+                },
+                documents: [{ type: 'business-license', url: 'https://x.test/license.pdf' }]
             };
 
             await createVenue(mockReq, mockRes, mockNext);
 
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.owner.toString()).toBe(regularUser._id.toString());
+        });
+
+        it('should reject venue creation without documents', async () => {
+            mockReq.user = admin;
+            mockReq.body = {
+                name: 'No Docs Venue',
+                owner: regularUser._id.toString(),
+                address: {
+                    street: '3 Nowhere St',
+                    city: 'Lahore',
+                    state: 'Punjab',
+                    country: 'Pakistan'
+                },
+                location: { type: 'Point', coordinates: [74.3587, 31.5204] },
+                contact: { primaryPhone: '+923001234572', email: 'nodocs@example.com' },
+                amenities: { totalCourts: 1 }
+            };
+
+            await createVenue(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
         });
 
         it('should reject venue creation without an owner in the body', async () => {
@@ -603,6 +630,32 @@ describe('Venue Controller', () => {
 
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.verification.documents.length).toBe(1);
+        });
+
+        it('should expose verification documents and requests to the venue owner', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            venue.verification.documentRequests.push({ type: 'tax-document', url: 'https://x.test/tax.pdf', requestedBy: owner._id, status: 'pending' });
+            await venue.save();
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.user = owner;
+
+            await getVenue(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.verification.documents.length).toBe(1);
+            expect(response.data.verification.documentRequests.length).toBe(1);
+        });
+
+        it('should hide verification documents from an unrelated authenticated user', async () => {
+            venue.verification.documents.push({ type: 'business-license', url: 'https://x.test/doc.pdf' });
+            await venue.save();
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.user = regularUser;
+
+            await getVenue(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.verification.documents).toBeUndefined();
         });
     });
 
@@ -841,6 +894,90 @@ describe('Venue Controller', () => {
                 resourceId: venue._id
             });
             expect(auditEntry).not.toBeNull();
+        });
+    });
+
+    describe('addVerificationDocument', () => {
+        it('should create a pending document request, not a live document', async () => {
+            mockReq.user = owner;
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.body = { type: 'business-license', url: 'https://x.test/new-license.pdf' };
+
+            await addVerificationDocument(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+
+            const updated = await Venue.findById(venue._id);
+            expect(updated.verification.documents).toHaveLength(0);
+            expect(updated.verification.documentRequests).toHaveLength(1);
+            expect(updated.verification.documentRequests[0].status).toBe('pending');
+            expect(updated.verification.documentRequests[0].requestedBy.toString()).toBe(owner._id.toString());
+        });
+
+        it('should not allow a non-owner, non-admin to request a document change', async () => {
+            mockReq.user = regularUser;
+            mockReq.params = { id: venue._id.toString() };
+            mockReq.body = { type: 'business-license', url: 'https://x.test/new-license.pdf' };
+
+            await addVerificationDocument(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(403);
+        });
+    });
+
+    describe('updateVerificationDocumentStatus', () => {
+        beforeEach(async () => {
+            venue.verification.documentRequests.push({
+                type: 'business-license',
+                url: 'https://x.test/pending-license.pdf',
+                requestedBy: owner._id,
+                status: 'pending'
+            });
+            await venue.save();
+        });
+
+        it('should copy the document into the live set when approved', async () => {
+            const request = venue.verification.documentRequests[0];
+            mockReq.user = admin;
+            mockReq.params = { id: venue._id.toString(), docId: request._id.toString() };
+            mockReq.body = { status: 'approved' };
+
+            await updateVerificationDocumentStatus(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+
+            const updated = await Venue.findById(venue._id);
+            expect(updated.verification.documentRequests[0].status).toBe('approved');
+            expect(updated.verification.documents).toHaveLength(1);
+            expect(updated.verification.documents[0].url).toBe('https://x.test/pending-license.pdf');
+            expect(updated.verification.documents[0].status).toBe('approved');
+        });
+
+        it('should not add the document to the live set when rejected', async () => {
+            const request = venue.verification.documentRequests[0];
+            mockReq.user = admin;
+            mockReq.params = { id: venue._id.toString(), docId: request._id.toString() };
+            mockReq.body = { status: 'rejected', reviewNotes: 'Document is expired' };
+
+            await updateVerificationDocumentStatus(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+
+            const updated = await Venue.findById(venue._id);
+            expect(updated.verification.documentRequests[0].status).toBe('rejected');
+            expect(updated.verification.documentRequests[0].reviewNotes).toBe('Document is expired');
+            expect(updated.verification.documents).toHaveLength(0);
+        });
+
+        it('should not allow a non-admin to review a document request', async () => {
+            const request = venue.verification.documentRequests[0];
+            mockReq.user = owner;
+            mockReq.params = { id: venue._id.toString(), docId: request._id.toString() };
+            mockReq.body = { status: 'approved' };
+
+            await updateVerificationDocumentStatus(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(403);
         });
     });
 

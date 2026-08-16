@@ -10,7 +10,9 @@ exports.getFaqs = async (req, res, next) => {
     try {
         const { category } = req.query;
 
-        const query = { isPublished: true };
+        // Admins manage drafts too (e.g. the FAQ admin page), so only
+        // non-admins are restricted to published FAQs.
+        const query = req.user?.role === 'admin' ? {} : { isPublished: true };
         if (category) query.category = category;
 
         const faqs = await Faq.find(query).sort('order');

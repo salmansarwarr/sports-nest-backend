@@ -69,7 +69,10 @@ describe('Venue Routes E2E Tests', () => {
             wifi: { available: true, isFree: true },
             cafeteria: true,
             totalCourts: 5
-        }
+        },
+        documents: [
+            { type: 'business-license', url: 'https://example.com/license.pdf' }
+        ]
     };
 
     // Venue creation is admin-only; the admin supplies the target owner's userId.
@@ -349,6 +352,93 @@ describe('Venue Routes E2E Tests', () => {
 
             expect(response.body.success).toBe(true);
             expect(response.body.data.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('Venue Managers', () => {
+        let managedVenueId;
+
+        beforeEach(async () => {
+            const response = await createVenueAsAdmin();
+            managedVenueId = response.body.data._id;
+        });
+
+        it('should let the owner add a manager by email', async () => {
+            const response = await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ email: userData.email })
+                .expect(200);
+
+            expect(response.body.success).toBe(true);
+            expect(response.body.data.some((m) => m.email === userData.email)).toBe(true);
+
+            const managerUser = await User.findOne({ email: userData.email });
+            expect(managerUser.role).toBe('manager');
+        });
+
+        it('should let an admin add a manager by email', async () => {
+            const response = await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ email: userData.email })
+                .expect(200);
+
+            expect(response.body.success).toBe(true);
+        });
+
+        it('should not allow a regular user to add a manager', async () => {
+            const response = await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${userToken}`)
+                .send({ email: userData.email })
+                .expect(403);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should 404 when the email does not match a registered user', async () => {
+            const response = await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ email: 'nobody-registered@example.com' })
+                .expect(404);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should reject adding the same manager twice', async () => {
+            await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ email: userData.email })
+                .expect(200);
+
+            const response = await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ email: userData.email })
+                .expect(409);
+
+            expect(response.body.success).toBe(false);
+        });
+
+        it('should let the owner remove a manager', async () => {
+            await request(app)
+                .post(`/api/venues/${managedVenueId}/managers`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .send({ email: userData.email })
+                .expect(200);
+
+            const managerUser = await User.findOne({ email: userData.email });
+
+            const response = await request(app)
+                .delete(`/api/venues/${managedVenueId}/managers/${managerUser._id}`)
+                .set('Authorization', `Bearer ${ownerToken}`)
+                .expect(200);
+
+            expect(response.body.success).toBe(true);
+            expect(response.body.data.some((m) => m.email === userData.email)).toBe(false);
         });
     });
 });

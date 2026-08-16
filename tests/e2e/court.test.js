@@ -70,7 +70,10 @@ describe('Court Routes E2E Tests', () => {
             wifi: { available: true, isFree: true },
             cafeteria: true,
             totalCourts: 5
-        }
+        },
+        documents: [
+            { type: 'business-license', url: 'https://example.com/license.pdf' }
+        ]
     };
 
     const courtData = {

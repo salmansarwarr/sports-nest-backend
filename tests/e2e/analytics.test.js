@@ -28,7 +28,8 @@ describe('Analytics Routes E2E Tests', () => {
         address: { street: '10 Analytics St', city: 'Karachi', state: 'Sindh', country: 'Pakistan', postalCode: '75000' },
         location: { type: 'Point', coordinates: [67.0011, 24.8607] },
         contact: { primaryPhone: '+923009876543', email: 'analyticscomplex@example.com' },
-        amenities: { totalCourts: 1 }
+        amenities: { totalCourts: 1 },
+        documents: [{ type: 'business-license', url: 'https://example.com/license.pdf' }]
     };
 
     const courtData = {

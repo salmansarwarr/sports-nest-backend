@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const faqController = require('../controllers/faqController');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, optionalAuthenticate } = require('../middleware/auth');
 const { createFaqValidation, updateFaqValidation, mongoIdValidation } = require('../middleware/faqValidation');
 
 /**
@@ -21,7 +21,7 @@ const { createFaqValidation, updateFaqValidation, mongoIdValidation } = require(
  *       200:
  *         description: FAQs retrieved successfully
  */
-router.get('/', faqController.getFaqs);
+router.get('/', optionalAuthenticate, faqController.getFaqs);
 
 /**
  * @swagger

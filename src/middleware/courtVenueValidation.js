@@ -57,6 +57,18 @@ exports.createVenueValidation = [
     body('timezone')
         .optional()
         .isString(),
+
+    body('documents')
+        .isArray({ min: 1 }).withMessage('At least one legal document (business license, ownership proof, etc.) is required to create a venue'),
+
+    body('documents.*.type')
+        .notEmpty().withMessage('Document type is required')
+        .isIn(['business-license', 'ownership-proof', 'id-card', 'tax-document', 'other'])
+        .withMessage('Invalid document type'),
+
+    body('documents.*.url')
+        .trim()
+        .notEmpty().withMessage('Document URL is required'),
 ];
 
 exports.updateVenueValidation = [
@@ -601,6 +613,20 @@ exports.mongoIdAndExceptionIdValidation = [
 exports.venueIdParamValidation = [
     param('venueId')
         .isMongoId().withMessage('Invalid venue ID format'),
+];
+
+exports.addManagerValidation = [
+    param('id')
+        .isMongoId().withMessage('Invalid venue ID format'),
+    body('email')
+        .isEmail().withMessage('A valid email is required').normalizeEmail(),
+];
+
+exports.mongoIdAndUserIdValidation = [
+    param('id')
+        .isMongoId().withMessage('Invalid venue ID format'),
+    param('userId')
+        .isMongoId().withMessage('Invalid user ID format'),
 ];
 
 module.exports = exports;

@@ -12,6 +12,7 @@ const {
     getBookings,
     getBooking,
     updateBooking,
+    createRescheduleFeeIntent,
     cancelBooking,
     checkAvailability,
     getAvailableSlots,
@@ -789,6 +790,56 @@ describe('Booking Controller', () => {
             expect(response.count).toBeLessThanOrEqual(1);
             expect(response.totalPages).toBeGreaterThanOrEqual(1);
         });
+
+        it('should let the venue owner see all bookings when filtering by venue only (no court)', async () => {
+            const otherUser = await User.create({
+                firstName: 'Other',
+                lastName: 'Athlete',
+                email: 'other-athlete@example.com',
+                password: 'Password123!'
+            });
+            const otherBookingStart = new Date(Date.now() + 72 * 60 * 60 * 1000);
+            await Booking.create({
+                user: otherUser._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: otherBookingStart,
+                endTime: new Date(otherBookingStart.getTime() + 2 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                payment: { amount: 2100, currency: 'PKR', status: 'pending' }
+            });
+
+            // `owner` (not `user`) owns `venue` in this fixture's setup.
+            mockReq.user = owner;
+            mockReq.query = { venue: venue._id.toString() };
+
+            await getBookings(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            // 2 bookings from the outer beforeEach (placed by `user`) + 1 just
+            // created for `otherUser` — the venue owner should see all 3, not
+            // just their own.
+            expect(response.data.length).toBe(3);
+        });
+
+        it('should not let an unrelated user see another venue\'s bookings by passing venue alone', async () => {
+            const unrelatedUser = await User.create({
+                firstName: 'Unrelated',
+                lastName: 'User',
+                email: 'unrelated@example.com',
+                password: 'Password123!'
+            });
+
+            mockReq.user = unrelatedUser;
+            mockReq.query = { venue: venue._id.toString() };
+
+            await getBookings(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            // Scoped down to the caller's own bookings (none), not the venue's.
+            expect(response.data.length).toBe(0);
+        });
     });
 
     describe('getBooking', () => {
@@ -1043,6 +1094,167 @@ describe('Booking Controller', () => {
             const updatedUser = await User.findById(user._id);
             expect(updatedUser.walletBalance).toBe(50); // untouched
         });
+
+        it('should reschedule and charge the fee via card when a valid reschedule-fee payment intent is supplied', async () => {
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000), // 10h out -> 20% tier
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+            await User.findByIdAndUpdate(user._id, { walletBalance: 50 }); // insufficient for the 400 fee
+
+            Stripe.__mockPaymentIntents.retrieve.mockResolvedValueOnce({
+                id: 'pi_reschedule_fee_1',
+                status: 'succeeded',
+                amount: 40000, // 400 PKR in minor units
+                metadata: { bookingId: soonBooking._id.toString(), purpose: 'reschedule_fee' }
+            });
+
+            const newStartTime = getSlotTime(5);
+            const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.params = { id: soonBooking._id.toString() };
+            mockReq.body = {
+                startTime: newStartTime.toISOString(),
+                endTime: newEndTime.toISOString(),
+                rescheduleFeePaymentIntentId: 'pi_reschedule_fee_1'
+            };
+
+            await updateBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.rescheduleFeeInfo.feeAmount).toBe(400);
+
+            const rescheduledBooking = await Booking.findById(soonBooking._id);
+            expect(rescheduledBooking.startTime.toISOString()).toBe(newStartTime.toISOString());
+
+            // Wallet was never touched — the fee was paid by card instead.
+            const updatedUser = await User.findById(user._id);
+            expect(updatedUser.walletBalance).toBe(50);
+
+            const feePayment = await Payment.findOne({ booking: soonBooking._id, paymentMethod: 'reschedule-fee' });
+            expect(feePayment).not.toBeNull();
+            expect(feePayment.status).toBe('succeeded');
+            expect(feePayment.amount).toBe(400);
+        });
+
+        it('should reject a reschedule-fee payment intent that does not match this booking', async () => {
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000),
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+            await User.findByIdAndUpdate(user._id, { walletBalance: 50 });
+
+            Stripe.__mockPaymentIntents.retrieve.mockResolvedValueOnce({
+                id: 'pi_wrong_booking',
+                status: 'succeeded',
+                amount: 40000,
+                metadata: { bookingId: 'some-other-booking-id', purpose: 'reschedule_fee' }
+            });
+
+            const newStartTime = getSlotTime(5);
+            const newEndTime = new Date(newStartTime.getTime() + 2 * 60 * 60 * 1000);
+
+            mockReq.user = user;
+            mockReq.params = { id: soonBooking._id.toString() };
+            mockReq.body = {
+                startTime: newStartTime.toISOString(),
+                endTime: newEndTime.toISOString(),
+                rescheduleFeePaymentIntentId: 'pi_wrong_booking'
+            };
+
+            await updateBooking(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+
+            const unchangedBooking = await Booking.findById(soonBooking._id);
+            expect(unchangedBooking.startTime.toISOString()).toBe(soonBooking.startTime.toISOString());
+        });
+    });
+
+    describe('createRescheduleFeeIntent', () => {
+        it('should create a payment intent for the tiered reschedule fee', async () => {
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000), // 10h out -> 20% tier
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+
+            mockReq.user = user;
+            mockReq.params = { id: soonBooking._id.toString() };
+
+            await createRescheduleFeeIntent(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+            expect(Stripe.__mockPaymentIntents.create).toHaveBeenCalledWith(
+                expect.objectContaining({ amount: 40000, currency: 'pkr' })
+            );
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.feeAmount).toBe(400);
+            expect(response.data.feePercentage).toBe(20);
+            expect(response.data.clientSecret).toBeDefined();
+        });
+
+        it('should reject when no reschedule fee currently applies (more than 24h out)', async () => {
+            const farBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: getSlotTime(5),
+                endTime: new Date(getSlotTime(5).getTime() + 2 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+
+            mockReq.user = user;
+            mockReq.params = { id: farBooking._id.toString() };
+
+            await createRescheduleFeeIntent(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+        });
+
+        it('should reject a request from a user who does not own the booking', async () => {
+            const stranger = await User.create({
+                firstName: 'Stranger', lastName: 'Danger', email: 'reschedulestranger@example.com', password: 'Password123!'
+            });
+            const soonBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() + 10 * 60 * 60 * 1000),
+                endTime: new Date(Date.now() + 12 * 60 * 60 * 1000),
+                status: 'confirmed',
+                pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2000 },
+                payment: { amount: 2000, currency: 'PKR', status: 'completed' }
+            });
+
+            mockReq.user = stranger;
+            mockReq.params = { id: soonBooking._id.toString() };
+
+            await createRescheduleFeeIntent(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(403);
+        });
     });
 
     describe('cancelBooking', () => {
@@ -1284,6 +1496,15 @@ describe('Booking Controller', () => {
                     success: true,
                     data: expect.any(Array)
                 })
+            );
+
+            // Regression guard: a court with real operating hours and no
+            // conflicting bookings must actually produce bookable slots, not
+            // silently return an empty array for every date.
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBeGreaterThan(0);
+            expect(response.data[0]).toEqual(
+                expect.objectContaining({ available: true }),
             );
         });
 
@@ -1575,6 +1796,40 @@ describe('Booking Controller', () => {
 
             const response = mockRes.json.mock.calls[0][0];
             expect(response.data.every(b => new Date(b.startTime) >= new Date())).toBe(true);
+        });
+
+        it('should filter by a comma-separated list of statuses', async () => {
+            await Booking.create([
+                {
+                    user: user._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime: new Date(Date.now() - 4 * 60 * 60 * 1000),
+                    endTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+                    status: 'completed',
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'completed' }
+                },
+                {
+                    user: user._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime: new Date(Date.now() - 8 * 60 * 60 * 1000),
+                    endTime: new Date(Date.now() - 6 * 60 * 60 * 1000),
+                    status: 'cancelled',
+                    pricing: { basePrice: 2000, subtotal: 2000, totalAmount: 2100 },
+                    payment: { amount: 2100, currency: 'PKR', status: 'refunded' }
+                }
+            ]);
+
+            mockReq.user = user;
+            mockReq.query = { status: 'completed,cancelled' };
+
+            await getMyBookings(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.data.length).toBe(2);
+            expect(response.data.every(b => ['completed', 'cancelled'].includes(b.status))).toBe(true);
         });
     });
 

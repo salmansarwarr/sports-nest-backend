@@ -107,7 +107,30 @@ describe('Review Controller', () => {
             expect(updatedCourt.stats.totalReviews).toBe(1);
         });
 
-        it('should reject review for a non-completed booking', async () => {
+        it('should create a review for a cancelled booking', async () => {
+            const cancelledBooking = await Booking.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                startTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+                endTime: new Date(Date.now() - 60 * 60 * 1000),
+                status: 'cancelled',
+                pricing: { basePrice: 1000, subtotal: 1000, totalAmount: 1050 },
+                payment: { amount: 1050, currency: 'PKR', status: 'refunded' }
+            });
+
+            mockReq.user = user;
+            mockReq.body = { booking: cancelledBooking._id.toString(), rating: 3, comment: 'Had to cancel, but staff were helpful.' };
+
+            await createReview(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(201);
+
+            const updatedBooking = await Booking.findById(cancelledBooking._id);
+            expect(updatedBooking.isReviewed).toBe(true);
+        });
+
+        it('should reject review for a non-completed, non-cancelled booking', async () => {
             const pendingBooking = await Booking.create({
                 user: user._id,
                 court: court._id,

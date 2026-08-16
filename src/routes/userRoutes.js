@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const User = require('../models/User');
+const Venue = require('../models/Venue');
 const auditLog = require('../utils/auditLog');
 const { body, validationResult } = require('express-validator');
 
@@ -122,6 +123,20 @@ router.patch(
 
             const before = await User.findById(req.params.id).select('role');
             if (!before) return res.status(404).json({ success: false, message: 'User not found.' });
+
+            // Changing a venue owner away from the 'owner' role would orphan
+            // their venue (it would keep referencing a non-owner user, with
+            // no UI path to reassign or reach it). Block the demotion until
+            // the venue is reassigned or deleted.
+            if (before.role === 'owner' && req.body.role !== 'owner') {
+                const ownedVenue = await Venue.findOne({ owner: req.params.id }).select('name');
+                if (ownedVenue) {
+                    return res.status(409).json({
+                        success: false,
+                        message: `Cannot change role: this user owns the venue "${ownedVenue.name}". Reassign or delete that venue before changing their role.`,
+                    });
+                }
+            }
 
             const user = await User.findByIdAndUpdate(
                 req.params.id,

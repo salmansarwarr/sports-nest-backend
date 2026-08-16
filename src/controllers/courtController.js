@@ -44,6 +44,19 @@ exports.createCourt = async (req, res, next) => {
             owner: isAdmin && req.body.owner ? req.body.owner : req.user._id
         };
 
+        // A court with no operating hours can never generate any bookable
+        // slots (Booking.findAvailableSlots looks up the current day in this
+        // array and returns [] if nothing matches) — default to a sensible
+        // 7-day schedule rather than silently creating an unbookable court.
+        if (!Array.isArray(courtData.operatingHours) || courtData.operatingHours.length === 0) {
+            courtData.operatingHours = Array.from({ length: 7 }, (_, dayOfWeek) => ({
+                dayOfWeek,
+                openTime: '08:00',
+                closeTime: '22:00',
+                isClosed: false
+            }));
+        }
+
         const court = await Court.create(courtData);
 
         // Update venue stats
@@ -928,13 +941,43 @@ exports.calculatePrice = async (req, res, next) => {
         });
 
         const duration = (new Date(endTime) - new Date(startTime)) / (1000 * 60); // in minutes
+        const durationHours = duration / 60;
+
+        // Breakdown for display purposes only — court.calculatePrice() already
+        // folds the applicable pricing-rule rate and any discounts into a
+        // single number (the same one used to actually charge the booking in
+        // bookingController.createBooking); this just decomposes it back into
+        // a base amount + peak/off-peak adjustment for the UI, without
+        // changing how the real charge is computed. Tax mirrors the 5% rate
+        // applied at booking creation so the quote matches what's charged.
+        const round2 = (n) => Math.round(n * 100) / 100;
+        const baseAmount = round2(court.baseHourlyRate * durationHours);
+        const peakAdjustment = round2(Math.max(0, price - baseAmount));
+        const groupAdjustment = 0; // no distinct group surcharge is modeled; group-size discounts (if any) are already folded into `price`
+        const subtotal = round2(price);
+        const taxes = round2(subtotal * 0.05);
+        const totalAmount = round2(subtotal + taxes);
+
+        const breakdown = [{ description: 'Base Court Rate', amount: baseAmount }];
+        if (peakAdjustment > 0) {
+            breakdown.push({ description: 'Peak Hour Adjustment', amount: peakAdjustment });
+        }
+        breakdown.push({ description: 'Taxes & Service Fees', amount: taxes });
 
         res.status(200).json({
             success: true,
             data: {
+                baseAmount,
+                peakAdjustment,
+                groupAdjustment,
+                subtotal,
+                taxes,
+                totalAmount,
+                currency: court.currency,
+                breakdown,
+                // Legacy fields, kept for existing/other consumers.
                 baseRate: court.baseHourlyRate,
                 totalPrice: price,
-                currency: court.currency,
                 duration,
                 startTime,
                 endTime
@@ -1071,7 +1114,7 @@ exports.getCourtsByVenue = async (req, res, next) => {
         // Only show active courts to non-authenticated users
         if (!req.user || (req.user.role !== 'admin' && venue.owner.toString() !== req.user._id.toString())) {
             query.status = 'active';
-        } else if (status) {
+        } else if (status && status !== 'all') {
             query.status = status;
         }
 

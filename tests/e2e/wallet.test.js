@@ -137,7 +137,8 @@ describe('Wallet Routes E2E Tests', () => {
                     address: { street: '1 Wallet St', city: 'Karachi', state: 'Sindh', country: 'Pakistan', postalCode: '75000' },
                     location: { type: 'Point', coordinates: [67.0011, 24.8607] },
                     contact: { primaryPhone: '+923001112222', email: 'walletvenue@example.com' },
-                    amenities: { totalCourts: 5 }
+                    amenities: { totalCourts: 5 },
+                    documents: [{ type: 'business-license', url: 'https://example.com/license.pdf' }]
                 });
             const venueId = venueResponse.body.data._id;
             await require('../../src/models/Venue.js').findByIdAndUpdate(venueId, { status: 'active' });

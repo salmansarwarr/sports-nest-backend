@@ -392,6 +392,33 @@ router.put(
 
 /**
  * @swagger
+ * /api/bookings/{id}/reschedule-fee-intent:
+ *   post:
+ *     summary: Create a Stripe payment intent to pay a reschedule fee on the spot (alternative to a wallet debit)
+ *     tags: [Bookings]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       201:
+ *         description: Payment intent created
+ *       400:
+ *         description: No reschedule fee applies right now
+ */
+router.post(
+    '/:id/reschedule-fee-intent',
+    protect,
+    mongoIdValidation,
+    bookingController.createRescheduleFeeIntent
+);
+
+/**
+ * @swagger
  * /api/bookings/{id}:
  *   delete:
  *     summary: Cancel booking

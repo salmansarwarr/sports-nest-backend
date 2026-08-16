@@ -304,6 +304,9 @@ const venueSchema = new mongoose.Schema({
         notes: {
             type: String,
         },
+        // Live, admin-approved documents only — populated either directly at
+        // venue creation (admin-uploaded) or by approving an entry from
+        // documentRequests below. Never written to directly by an owner.
         documents: [{
             type: {
                 type: String,
@@ -318,8 +321,38 @@ const venueSchema = new mongoose.Schema({
             status: {
                 type: String,
                 enum: ['pending', 'approved', 'rejected'],
+                default: 'approved',
+            },
+        }],
+        // Owner-submitted requests to add/replace a legal document. An admin
+        // must approve a request before it's copied into `documents` above —
+        // owners cannot update the live document set directly.
+        documentRequests: [{
+            type: {
+                type: String,
+                enum: ['business-license', 'ownership-proof', 'id-card', 'tax-document', 'other'],
+            },
+            url: String,
+            publicId: String,
+            requestedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+            },
+            requestedAt: {
+                type: Date,
+                default: Date.now,
+            },
+            status: {
+                type: String,
+                enum: ['pending', 'approved', 'rejected'],
                 default: 'pending',
             },
+            reviewedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'User',
+            },
+            reviewedAt: Date,
+            reviewNotes: String,
         }],
     },
 

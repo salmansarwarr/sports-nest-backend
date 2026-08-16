@@ -47,6 +47,22 @@ const errorHandler = (err, req, res, next) => {
         error = { message: err.message, statusCode: 400 };
     }
 
+    // Stripe SDK errors carry their own HTTP-like statusCode. A card decline
+    // (StripeCardError, statusCode 402) is customer-actionable and safe to
+    // pass through as-is. Anything else - especially StripeAuthenticationError
+    // (401, e.g. a missing/invalid STRIPE_SECRET_KEY) and StripePermissionError
+    // (403) - must NOT be forwarded verbatim: those status codes collide with
+    // our own auth semantics, and the frontend's axios interceptor treats any
+    // 401 response as "the user's session token is invalid" and logs them
+    // out, even though the real problem is our Stripe configuration, not
+    // their session.
+    if (err.type && String(err.type).startsWith('Stripe') && err.type !== 'StripeCardError') {
+        error = {
+            message: 'Payment processing is temporarily unavailable. Please try again later.',
+            statusCode: 502
+        };
+    }
+
     res.status(error.statusCode || 500).json({
         success: false,
         message: error.message || "Server Error",

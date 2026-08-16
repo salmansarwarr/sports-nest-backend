@@ -13,6 +13,8 @@ const {
     mongoIdValidation,
     mongoIdAndMediaIdValidation,
     venueIdParamValidation,
+    addManagerValidation,
+    mongoIdAndUserIdValidation,
 } = require('../middleware/courtVenueValidation');
 
 /**
@@ -421,6 +423,74 @@ router.delete(
 
 /**
  * @swagger
+ * /api/venues/{id}/managers:
+ *   post:
+ *     summary: Add a manager to a venue by email (owner/admin only)
+ *     tags: [Venues]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Manager added successfully
+ */
+router.post(
+    '/:id/managers',
+    authenticate,
+    authorize('owner', 'admin'),
+    addManagerValidation,
+    venueController.addManager
+);
+
+/**
+ * @swagger
+ * /api/venues/{id}/managers/{userId}:
+ *   delete:
+ *     summary: Remove a manager from a venue (owner/admin only)
+ *     tags: [Venues]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Manager removed successfully
+ */
+router.delete(
+    '/:id/managers/:userId',
+    authenticate,
+    authorize('owner', 'admin'),
+    mongoIdAndUserIdValidation,
+    venueController.removeManager
+);
+
+/**
+ * @swagger
  * /api/venues/{id}/status:
  *   patch:
  *     summary: Update venue status
@@ -625,6 +695,7 @@ router.post(
  */
 router.get(
     '/:venueId/courts',
+    optionalAuthenticate,
     venueIdParamValidation,
     courtController.getCourtsByVenue
 );

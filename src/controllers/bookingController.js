@@ -382,20 +382,33 @@ exports.getBookings = async (req, res, next) => {
             // Regular users can only see their own bookings
             if (!court && !venue) {
                 query.user = req.user._id;
-            } else {
-                // If filtering by court/venue, check if user is owner/manager
-                if (court) {
-                    const courtDoc = await Court.findById(court).populate('venue');
-                    if (courtDoc) {
-                        const isOwner = courtDoc.owner.toString() === req.user._id.toString();
-                        const isVenueOwner = courtDoc.venue.owner.toString() === req.user._id.toString();
-                        const isManager = courtDoc.managers.some(m => m.toString() === req.user._id.toString()) ||
-                            courtDoc.venue.managers.some(m => m.toString() === req.user._id.toString());
+            } else if (court) {
+                // If filtering by court, check if user is owner/manager of it
+                const courtDoc = await Court.findById(court).populate('venue');
+                if (courtDoc) {
+                    const isOwner = courtDoc.owner.toString() === req.user._id.toString();
+                    const isVenueOwner = courtDoc.venue.owner.toString() === req.user._id.toString();
+                    const isManager = courtDoc.managers.some(m => m.toString() === req.user._id.toString()) ||
+                        courtDoc.venue.managers.some(m => m.toString() === req.user._id.toString());
 
-                        if (!isOwner && !isVenueOwner && !isManager) {
-                            query.user = req.user._id;
-                        }
+                    if (!isOwner && !isVenueOwner && !isManager) {
+                        query.user = req.user._id;
                     }
+                } else {
+                    query.user = req.user._id;
+                }
+            } else if (venue) {
+                // Filtering by venue alone — check if user owns/manages it
+                const venueDoc = await Venue.findById(venue);
+                if (venueDoc) {
+                    const isVenueOwner = venueDoc.owner.toString() === req.user._id.toString();
+                    const isManager = venueDoc.managers.some(m => m.toString() === req.user._id.toString());
+
+                    if (!isVenueOwner && !isManager) {
+                        query.user = req.user._id;
+                    }
+                } else {
+                    query.user = req.user._id;
                 }
             }
         }
@@ -609,17 +622,55 @@ exports.updateBooking = async (req, res, next) => {
             const { feePercentage, feeAmount } = booking.calculateRescheduleFee();
             rescheduleFeeInfo = { feePercentage, feeAmount };
             if (feeAmount > 0) {
-                const debitedUser = await User.debitWallet(req.user._id, feeAmount, {
-                    source: 'reschedule_fee',
-                    booking: booking._id,
-                    description: `Reschedule fee (${feePercentage}%) for booking ${booking.bookingNumber}`
-                });
+                const { rescheduleFeePaymentIntentId } = req.body;
+                let paidByCard = false;
 
-                if (!debitedUser) {
-                    return res.status(402).json({
-                        success: false,
-                        message: `Rescheduling this close to the start time requires a ${feePercentage}% fee (${feeAmount} ${booking.pricing.currency}), and your wallet balance is insufficient to cover it. Top up your wallet or choose a slot further out.`
+                if (rescheduleFeePaymentIntentId) {
+                    const intent = await stripeUtil.retrievePaymentIntent(rescheduleFeePaymentIntentId);
+                    const intentAmountMatches = Math.round(intent.amount) === Math.round(feeAmount * 100);
+
+                    if (
+                        intent.status !== 'succeeded' ||
+                        intent.metadata?.bookingId !== booking._id.toString() ||
+                        intent.metadata?.purpose !== 'reschedule_fee' ||
+                        !intentAmountMatches
+                    ) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Reschedule fee payment could not be verified'
+                        });
+                    }
+
+                    await Payment.create({
+                        booking: booking._id,
+                        user: req.user._id,
+                        gateway: 'stripe',
+                        gatewayPaymentIntentId: intent.id,
+                        gatewayChargeId: intent.latest_charge || undefined,
+                        amount: feeAmount,
+                        currency: booking.pricing.currency,
+                        status: 'succeeded',
+                        paymentMethod: 'reschedule-fee',
+                        paidAt: new Date()
                     });
+
+                    paidByCard = true;
+                }
+
+                if (!paidByCard) {
+                    const debitedUser = await User.debitWallet(req.user._id, feeAmount, {
+                        source: 'reschedule_fee',
+                        booking: booking._id,
+                        description: `Reschedule fee (${feePercentage}%) for booking ${booking.bookingNumber}`
+                    });
+
+                    if (!debitedUser) {
+                        return res.status(402).json({
+                            success: false,
+                            message: `Rescheduling this close to the start time requires a ${feePercentage}% fee (${feeAmount} ${booking.pricing.currency}), and your wallet balance is insufficient to cover it. Top up your wallet, pay the fee on the spot, or choose a slot further out.`,
+                            data: { rescheduleFee: { percentage: feePercentage, amount: feeAmount }, requiresPayment: true }
+                        });
+                    }
                 }
             }
 
@@ -657,6 +708,78 @@ exports.updateBooking = async (req, res, next) => {
             data: {
                 booking,
                 rescheduleFeeInfo
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Create a Stripe payment intent to pay a reschedule fee on the
+ *          spot, as an alternative to the wallet-only debit in
+ *          updateBooking. The client confirms this intent, then resubmits
+ *          the reschedule PUT with rescheduleFeePaymentIntentId so the fee
+ *          can be verified server-side before the time change is applied.
+ * @route   POST /api/bookings/:id/reschedule-fee-intent
+ * @access  Private (Booking owner or Admin)
+ */
+exports.createRescheduleFeeIntent = async (req, res, next) => {
+    try {
+        const booking = await Booking.findById(req.params.id);
+
+        if (!booking) {
+            return res.status(404).json({
+                success: false,
+                message: 'Booking not found'
+            });
+        }
+
+        const isOwner = booking.user.toString() === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin';
+
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to pay for this booking'
+            });
+        }
+
+        const canModify = booking.canBeModified();
+        if (!canModify.allowed) {
+            return res.status(400).json({
+                success: false,
+                message: canModify.reason
+            });
+        }
+
+        const { feePercentage, feeAmount } = booking.calculateRescheduleFee();
+
+        if (feeAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No reschedule fee applies to this booking right now'
+            });
+        }
+
+        const intent = await stripeUtil.createPaymentIntent({
+            amount: feeAmount,
+            currency: booking.pricing.currency,
+            metadata: {
+                bookingId: booking._id.toString(),
+                bookingNumber: booking.bookingNumber,
+                purpose: 'reschedule_fee'
+            }
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Reschedule fee payment intent created',
+            data: {
+                clientSecret: intent.client_secret,
+                feePercentage,
+                feeAmount,
+                currency: booking.pricing.currency
             }
         });
     } catch (error) {
@@ -1134,7 +1257,11 @@ exports.getMyBookings = async (req, res, next) => {
         const query = { user: req.user._id };
 
         if (status) {
-            query.status = status;
+            // Supports a comma-separated list (e.g. "completed,cancelled") in
+            // addition to a single status, for callers that need bookings
+            // matching any of several statuses in one request.
+            const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+            query.status = statuses.length > 1 ? { $in: statuses } : statuses[0];
         }
 
         if (upcoming === 'true') {

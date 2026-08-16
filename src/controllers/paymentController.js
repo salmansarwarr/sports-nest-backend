@@ -302,3 +302,80 @@ exports.getReceipt = async (req, res, next) => {
         next(error);
     }
 };
+
+/**
+ * @desc    Mark a booking's payment as completed without going through
+ *          Stripe. A dev/test-only shortcut so the booking flow can be
+ *          exercised without entering a real (or test-mode) card — mirrors
+ *          the fields the Stripe webhook would normally set. Disabled in
+ *          production.
+ * @route   POST /api/payments/:bookingId/mark-paid-test
+ * @access  Private (Booking owner or Admin)
+ */
+exports.markBookingPaidForTesting = async (req, res, next) => {
+    try {
+        if (process.env.NODE_ENV === 'production') {
+            return res.status(403).json({
+                success: false,
+                message: 'Test payment bypass is disabled in production'
+            });
+        }
+
+        const booking = await Booking.findById(req.params.bookingId).populate('user');
+        if (!booking) {
+            return res.status(404).json({
+                success: false,
+                message: 'Booking not found'
+            });
+        }
+
+        const isOwner = booking.user._id.toString() === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin';
+
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to pay for this booking'
+            });
+        }
+
+        if (booking.isPaid) {
+            return res.status(400).json({
+                success: false,
+                message: 'Booking is already paid'
+            });
+        }
+
+        const remainder = Math.max(0, booking.pricing.totalAmount - (booking.pricing.walletAmountApplied || 0));
+        const testTxnId = `test_${booking._id}_${Date.now()}`;
+
+        booking.payment.status = 'completed';
+        booking.payment.method = 'card';
+        booking.payment.paidAt = new Date();
+        booking.payment.transactionId = testTxnId;
+        await booking.save();
+
+        await Payment.create({
+            booking: booking._id,
+            user: booking.user._id,
+            gateway: 'stripe',
+            gatewayPaymentIntentId: testTxnId,
+            amount: remainder,
+            currency: booking.pricing.currency,
+            status: 'succeeded',
+            paymentMethod: 'test-bypass',
+            paidAt: new Date()
+        });
+
+        await loyaltyUtil.awardBookingPoints(booking);
+        await referralUtil.processReferralQualification(booking);
+
+        res.status(200).json({
+            success: true,
+            message: 'Booking marked as paid (test mode — no real payment was processed)',
+            data: booking
+        });
+    } catch (error) {
+        next(error);
+    }
+};

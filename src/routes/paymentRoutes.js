@@ -6,6 +6,7 @@ const {
     createPaymentIntentValidation,
     getPaymentHistoryQueryValidation,
     mongoIdValidation,
+    bookingIdParamValidation,
 } = require('../middleware/paymentValidation');
 
 // NOTE: the Stripe webhook route (POST /api/payments/webhook) is NOT defined
@@ -35,6 +36,22 @@ const {
  *         description: Booking already paid
  */
 router.post('/create-intent', authenticate, createPaymentIntentValidation, paymentController.createPaymentIntent);
+
+/**
+ * @swagger
+ * /api/payments/{bookingId}/mark-paid-test:
+ *   post:
+ *     summary: Mark a booking as paid without going through Stripe (dev/test only, disabled in production)
+ *     tags: [Payments]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Booking marked as paid
+ *       403:
+ *         description: Disabled in production, or not authorized for this booking
+ */
+router.post('/:bookingId/mark-paid-test', authenticate, bookingIdParamValidation, paymentController.markBookingPaidForTesting);
 
 /**
  * @swagger

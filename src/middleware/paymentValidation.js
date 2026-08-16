@@ -15,3 +15,7 @@ exports.getPaymentHistoryQueryValidation = [
 exports.mongoIdValidation = [
     param('id').isMongoId().withMessage('Invalid payment ID'),
 ];
+
+exports.bookingIdParamValidation = [
+    param('bookingId').isMongoId().withMessage('Invalid booking ID'),
+];
