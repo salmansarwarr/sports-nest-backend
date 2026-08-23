@@ -24,6 +24,8 @@ const faqRoutes = require('./routes/faqRoutes');
 const legalRoutes = require('./routes/legalRoutes');
 const userRoutes = require('./routes/userRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const adminDashboardRoutes = require('./routes/adminDashboardRoutes');
+const ownerDashboardRoutes = require('./routes/ownerDashboardRoutes');
 const paymentController = require('./controllers/paymentController');
 const errorHandler = require('./middleware/errorHandler.js');
 
@@ -186,6 +188,8 @@ app.use('/api/faqs', faqRoutes);
 app.use('/api/legal', legalRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/uploads', uploadRoutes);
+app.use('/api/admin/dashboard', adminDashboardRoutes);
+app.use('/api/owner/dashboard', ownerDashboardRoutes);
 
 // 404 handler
 app.use(/('*')/, (req, res) => {

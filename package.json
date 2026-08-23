@@ -10,7 +10,9 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:unit": "jest tests/unit --detectOpenHandles",
-    "test:e2e": "jest tests/e2e --detectOpenHandles"
+    "test:e2e": "jest tests/e2e --detectOpenHandles",
+    "seed:owner-courts": "node scripts/seedOwnerVenueCourts.js",
+    "seed": "node scripts/seedDatabase.js"
   },
   "dependencies": {
     "bcryptjs": "3.0.2",
