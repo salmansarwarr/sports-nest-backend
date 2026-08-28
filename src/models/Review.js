@@ -17,6 +17,26 @@ const ownerReplySchema = new mongoose.Schema({
     },
 }, { _id: false });
 
+// A venue owner/manager flagging a review as offensive/abusive for admin
+// review. isReported flips back to false once an admin acts on it
+// (moderateReview), but reason/reportedBy/reportedAt are kept for the audit
+// trail rather than cleared.
+const reportSchema = new mongoose.Schema({
+    isReported: {
+        type: Boolean,
+        default: false,
+    },
+    reason: {
+        type: String,
+        maxlength: [500, 'Report reason cannot exceed 500 characters'],
+    },
+    reportedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+    },
+    reportedAt: Date,
+}, { _id: false });
+
 const reviewSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
@@ -66,6 +86,8 @@ const reviewSchema = new mongoose.Schema({
 
     ownerReply: ownerReplySchema,
 
+    report: reportSchema,
+
     status: {
         type: String,
         enum: ['approved', 'pending', 'rejected'],
@@ -88,6 +110,7 @@ const reviewSchema = new mongoose.Schema({
 
 reviewSchema.index({ court: 1, status: 1 });
 reviewSchema.index({ venue: 1, status: 1 });
+reviewSchema.index({ 'report.isReported': 1 });
 
 // Recalculate a court's aggregate rating/review count from its approved reviews,
 // then propagate to the parent venue (Venue.updateStats reads from Court.stats).

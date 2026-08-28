@@ -5,6 +5,18 @@ const Venue = require('../models/Venue');
 const { validationResult } = require('express-validator');
 const auditLog = require('../utils/auditLog');
 
+// Shared by replyToReview and reportReview: is this user the owner/manager
+// of the reviewed court or its parent venue (or an admin)?
+function isCourtOrVenueStaff(user, court, venue) {
+    return Boolean(
+        (court && court.owner.toString() === user._id.toString()) ||
+        (venue && venue.owner.toString() === user._id.toString()) ||
+        (court && court.managers.some(m => m.toString() === user._id.toString())) ||
+        (venue && venue.managers.some(m => m.toString() === user._id.toString())) ||
+        user.role === 'admin'
+    );
+}
+
 /**
  * @desc    Create a review for a completed or cancelled booking
  * @route   POST /api/reviews
@@ -90,6 +102,7 @@ exports.getReviews = async (req, res, next) => {
             venue,
             user,
             status,
+            reported,
             sortBy = '-createdAt',
             page = 1,
             limit = 20,
@@ -101,10 +114,15 @@ exports.getReviews = async (req, res, next) => {
         if (venue) query.venue = venue;
         if (user) query.user = user;
 
-        // Only admins can filter by/see non-approved reviews
-        if (status && req.user && req.user.role === 'admin') {
-            query.status = status;
+        const isAdmin = req.user && req.user.role === 'admin';
+
+        if (isAdmin) {
+            // Admins can see reviews of any status; leaving `status` off
+            // returns every status, not just approved ones.
+            if (status) query.status = status;
+            if (reported === 'true') query['report.isReported'] = true;
         } else {
+            // Only admins can filter by/see non-approved or reported-only reviews
             query.status = 'approved';
         }
 
@@ -280,14 +298,7 @@ exports.replyToReview = async (req, res, next) => {
         const court = await Court.findById(review.court);
         const venue = await Venue.findById(review.venue);
 
-        const isAuthorized =
-            (court && court.owner.toString() === req.user._id.toString()) ||
-            (venue && venue.owner.toString() === req.user._id.toString()) ||
-            (court && court.managers.some(m => m.toString() === req.user._id.toString())) ||
-            (venue && venue.managers.some(m => m.toString() === req.user._id.toString())) ||
-            req.user.role === 'admin';
-
-        if (!isAuthorized) {
+        if (!isCourtOrVenueStaff(req.user, court, venue)) {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to reply to this review'
@@ -305,6 +316,68 @@ exports.replyToReview = async (req, res, next) => {
         res.status(200).json({
             success: true,
             message: 'Reply added successfully',
+            data: review
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * @desc    Report a review as offensive/inappropriate for admin review
+ *          (court/venue owner or manager)
+ * @route   POST /api/reviews/:id/report
+ * @access  Private (Owner/Manager/Admin)
+ */
+exports.reportReview = async (req, res, next) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                errors: errors.array()
+            });
+        }
+
+        const review = await Review.findById(req.params.id);
+        if (!review) {
+            return res.status(404).json({
+                success: false,
+                message: 'Review not found'
+            });
+        }
+
+        const court = await Court.findById(review.court);
+        const venue = await Venue.findById(review.venue);
+
+        if (!isCourtOrVenueStaff(req.user, court, venue)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Not authorized to report this review'
+            });
+        }
+
+        review.report = {
+            isReported: true,
+            reason: req.body.reason,
+            reportedBy: req.user._id,
+            reportedAt: new Date()
+        };
+
+        await review.save();
+
+        await auditLog.record({
+            actor: req.user,
+            action: 'review.reported',
+            resourceType: 'Review',
+            resourceId: review._id,
+            changes: { reason: req.body.reason },
+            req
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Review reported to admin for take-down review',
             data: review
         });
     } catch (error) {
@@ -339,6 +412,13 @@ exports.moderateReview = async (req, res, next) => {
         review.moderationReason = req.body.moderationReason;
         review.moderatedBy = req.user._id;
         review.moderatedAt = new Date();
+
+        // A moderation action resolves any pending report — keep the
+        // reason/reporter/date for the audit trail, just drop it out of the
+        // "reported" admin queue.
+        if (review.report?.isReported) {
+            review.report.isReported = false;
+        }
 
         await review.save();
         await Review.recalculateCourtStats(review.court);

@@ -6,6 +6,7 @@ const {
     createReviewValidation,
     updateReviewValidation,
     replyValidation,
+    reportValidation,
     moderateValidation,
     getReviewsQueryValidation,
     mongoIdValidation,
@@ -99,6 +100,27 @@ router.delete('/:id', authenticate, mongoIdValidation, reviewController.deleteRe
  *         description: Reply added successfully
  */
 router.post('/:id/reply', authenticate, mongoIdValidation, replyValidation, reviewController.replyToReview);
+
+/**
+ * @swagger
+ * /api/reviews/{id}/report:
+ *   post:
+ *     summary: Report a review as offensive/inappropriate (court/venue owner or manager)
+ *     tags: [Reviews]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Review reported successfully
+ */
+router.post(
+    '/:id/report',
+    authenticate,
+    authorize('owner', 'manager', 'admin'),
+    mongoIdValidation,
+    reportValidation,
+    reviewController.reportReview
+);
 
 /**
  * @swagger

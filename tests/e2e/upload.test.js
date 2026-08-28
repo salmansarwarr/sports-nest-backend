@@ -127,4 +127,49 @@ describe('Upload Routes E2E Tests', () => {
             expect(response.body.success).toBe(false);
         });
     });
+
+    describe('POST /api/uploads/review-photo', () => {
+        it('should let any authenticated user (not just owner/admin) upload a review photo', async () => {
+            const response = await request(app)
+                .post('/api/uploads/review-photo')
+                .set('Authorization', `Bearer ${userToken}`)
+                .attach('photo', Buffer.from('fake-jpeg-bytes'), {
+                    filename: 'court.jpg',
+                    contentType: 'image/jpeg'
+                });
+
+            expect(response.status).toBe(201);
+            expect(response.body.success).toBe(true);
+            expect(response.body.data.url).toBeDefined();
+            expect(response.body.data.filename).toBe('court.jpg');
+        });
+
+        it('should reject a request with no file attached', async () => {
+            const response = await request(app)
+                .post('/api/uploads/review-photo')
+                .set('Authorization', `Bearer ${userToken}`);
+
+            expect(response.status).toBe(400);
+        });
+
+        it('should reject an unauthenticated request', async () => {
+            const response = await request(app)
+                .post('/api/uploads/review-photo')
+                .attach('photo', Buffer.from('fake'), 'court.jpg');
+
+            expect(response.status).toBe(401);
+        });
+
+        it('should reject a non-image file (e.g. PDF)', async () => {
+            const response = await request(app)
+                .post('/api/uploads/review-photo')
+                .set('Authorization', `Bearer ${userToken}`)
+                .attach('photo', Buffer.from('%PDF-1.4'), {
+                    filename: 'doc.pdf',
+                    contentType: 'application/pdf'
+                });
+
+            expect(response.status).toBe(400);
+        });
+    });
 });

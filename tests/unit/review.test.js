@@ -11,6 +11,7 @@ const {
     updateReview,
     deleteReview,
     replyToReview,
+    reportReview,
     moderateReview,
 } = require('../../src/controllers/reviewController');
 
@@ -218,6 +219,72 @@ describe('Review Controller', () => {
                 })
             );
         });
+
+        it('should let an admin see reviews of every status when no status filter is given', async () => {
+            const admin = await User.create({
+                firstName: 'Admin3', lastName: 'User', email: 'admin3@example.com', password: 'Password123!', role: 'admin'
+            });
+            await Review.findByIdAndUpdate(review._id, { status: 'rejected' });
+
+            mockReq.user = admin;
+            mockReq.query = { court: court._id.toString() };
+
+            await getReviews(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.count).toBe(1); // the rejected review is included for admins
+        });
+
+        it('should let an admin filter to only reported reviews', async () => {
+            await Review.findByIdAndUpdate(review._id, {
+                report: { isReported: true, reason: 'Offensive', reportedBy: owner._id, reportedAt: new Date() }
+            });
+            const otherReview = await Review.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                booking: await Booking.create({
+                    user: user._id,
+                    court: court._id,
+                    venue: venue._id,
+                    startTime: new Date(Date.now() - 4 * 60 * 60 * 1000),
+                    endTime: new Date(Date.now() - 2 * 60 * 60 * 1000),
+                    status: 'completed',
+                    pricing: { basePrice: 1000, subtotal: 1000, totalAmount: 1050 },
+                    payment: { amount: 1050, currency: 'PKR', status: 'completed' }
+                }).then(b => b._id),
+                rating: 5,
+                comment: 'Not reported'
+            });
+
+            const admin = await User.create({
+                firstName: 'Admin4', lastName: 'User', email: 'admin4@example.com', password: 'Password123!', role: 'admin'
+            });
+
+            mockReq.user = admin;
+            mockReq.query = { reported: 'true' };
+
+            await getReviews(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.count).toBe(1);
+            expect(response.data[0]._id.toString()).toBe(review._id.toString());
+            expect(response.data.some(r => r._id.toString() === otherReview._id.toString())).toBe(false);
+        });
+
+        it('should not let a non-admin filter to reported reviews', async () => {
+            await Review.findByIdAndUpdate(review._id, {
+                report: { isReported: true, reason: 'Offensive', reportedBy: owner._id, reportedAt: new Date() }
+            });
+
+            mockReq.user = user;
+            mockReq.query = { reported: 'true' };
+
+            await getReviews(mockReq, mockRes, mockNext);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response.count).toBe(1); // falls back to status:'approved' scoping, reported flag ignored
+        });
     });
 
     describe('updateReview', () => {
@@ -347,6 +414,69 @@ describe('Review Controller', () => {
         });
     });
 
+    describe('reportReview', () => {
+        let review;
+
+        beforeEach(async () => {
+            review = await Review.create({
+                user: user._id,
+                court: court._id,
+                venue: venue._id,
+                booking: completedBooking._id,
+                rating: 1,
+                comment: 'This place is terrible and the staff are awful people'
+            });
+        });
+
+        it('should allow the court owner to report a review', async () => {
+            mockReq.user = owner;
+            mockReq.params = { id: review._id.toString() };
+            mockReq.body = { reason: 'Contains personal attacks on staff' };
+
+            await reportReview(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+
+            const updated = await Review.findById(review._id);
+            expect(updated.report.isReported).toBe(true);
+            expect(updated.report.reason).toBe('Contains personal attacks on staff');
+            expect(updated.report.reportedBy.toString()).toBe(owner._id.toString());
+
+            const auditEntry = await AuditLog.findOne({ action: 'review.reported', resourceId: review._id });
+            expect(auditEntry).not.toBeNull();
+        });
+
+        it('should allow a venue manager to report a review', async () => {
+            const manager = await User.create({
+                firstName: 'Venue', lastName: 'Manager', email: 'reviewmanager@example.com',
+                password: 'Password123!', role: 'manager'
+            });
+            await Venue.findByIdAndUpdate(venue._id, { $push: { managers: manager._id } });
+
+            mockReq.user = manager;
+            mockReq.params = { id: review._id.toString() };
+            mockReq.body = { reason: 'Offensive language' };
+
+            await reportReview(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+        });
+
+        it('should not allow an unrelated user to report a review', async () => {
+            const stranger = await User.create({
+                firstName: 'Stranger', lastName: 'Danger', email: 'reportstranger@example.com', password: 'Password123!'
+            });
+
+            mockReq.user = stranger;
+            mockReq.params = { id: review._id.toString() };
+            mockReq.body = { reason: 'I just do not like it' };
+
+            await reportReview(mockReq, mockRes, mockNext);
+
+            expect(mockRes.status).toHaveBeenCalledWith(403);
+        });
+    });
+
     describe('moderateReview', () => {
         let review;
 
@@ -383,6 +513,25 @@ describe('Review Controller', () => {
 
             const auditEntry = await AuditLog.findOne({ action: 'review.moderated', resourceId: review._id });
             expect(auditEntry).not.toBeNull();
+        });
+
+        it('should resolve a pending report when an admin moderates the review', async () => {
+            review.report = { isReported: true, reason: 'Abusive', reportedBy: owner._id, reportedAt: new Date() };
+            await review.save();
+
+            const admin = await User.create({
+                firstName: 'Admin2', lastName: 'User', email: 'admin2@example.com', password: 'Password123!', role: 'admin'
+            });
+
+            mockReq.user = admin;
+            mockReq.params = { id: review._id.toString() };
+            mockReq.body = { status: 'rejected', moderationReason: 'Confirmed abusive' };
+
+            await moderateReview(mockReq, mockRes, mockNext);
+
+            const updated = await Review.findById(review._id);
+            expect(updated.report.isReported).toBe(false);
+            expect(updated.report.reason).toBe('Abusive'); // audit trail preserved
         });
     });
 });

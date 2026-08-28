@@ -40,6 +40,12 @@ exports.replyValidation = [
         .isLength({ max: 1000 }).withMessage('Reply cannot exceed 1000 characters'),
 ];
 
+exports.reportValidation = [
+    body('reason')
+        .notEmpty().withMessage('A reason is required to report a review')
+        .isLength({ max: 500 }).withMessage('Reason cannot exceed 500 characters'),
+];
+
 exports.moderateValidation = [
     body('status')
         .notEmpty().withMessage('Status is required')
@@ -55,6 +61,7 @@ exports.getReviewsQueryValidation = [
     query('venue').optional().isMongoId().withMessage('Invalid venue ID'),
     query('user').optional().isMongoId().withMessage('Invalid user ID'),
     query('status').optional().isIn(['approved', 'pending', 'rejected']).withMessage('Invalid status'),
+    query('reported').optional().isBoolean().withMessage('reported must be a boolean'),
     query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
     query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
 ];
