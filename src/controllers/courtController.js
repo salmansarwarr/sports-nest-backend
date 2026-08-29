@@ -603,14 +603,14 @@ exports.deleteMedia = async (req, res, next) => {
         const wasPrimary = court.media[mediaIndex].isPrimary;
         const publicId = court.media[mediaIndex].publicId;
 
-        // Delete from Cloudinary if publicId exists
+        // Delete from R2 if publicId (key) exists
         if (publicId) {
             try {
-                const { deleteFromCloudinary } = require('../utils/cloudinary');
-                await deleteFromCloudinary(publicId);
-            } catch (cloudinaryError) {
-                console.error('Failed to delete from Cloudinary:', cloudinaryError);
-                // Continue with deletion even if Cloudinary deletion fails
+                const { deleteFromR2 } = require('../utils/r2');
+                await deleteFromR2(publicId);
+            } catch (r2Error) {
+                console.error('Failed to delete from R2:', r2Error);
+                // Continue with deletion even if R2 deletion fails
             }
         }
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const upload = require('../middleware/upload');
-const { uploadToCloudinary } = require('../utils/cloudinary');
+const { uploadToR2 } = require('../utils/r2');
 
 /**
  * @swagger
@@ -16,7 +16,7 @@ const { uploadToCloudinary } = require('../utils/cloudinary');
  * @swagger
  * /api/uploads/document:
  *   post:
- *     summary: Upload a single document (image or PDF) to Cloudinary
+ *     summary: Upload a single document (image or PDF) to Cloudflare R2
  *     tags: [Uploads]
  *     security:
  *       - bearerAuth: []
@@ -38,16 +38,18 @@ router.post(
                 });
             }
 
-            const result = await uploadToCloudinary(req.file.buffer, {
-                folder: 'sports-nest/venue-documents'
+            const result = await uploadToR2(req.file.buffer, {
+                folder: 'sports-nest/venue-documents',
+                filename: req.file.originalname,
+                contentType: req.file.mimetype,
             });
 
             res.status(201).json({
                 success: true,
                 message: 'Document uploaded successfully',
                 data: {
-                    url: result.secure_url,
-                    publicId: result.public_id,
+                    url: result.url,
+                    publicId: result.key,
                     filename: req.file.originalname
                 }
             });
@@ -61,7 +63,7 @@ router.post(
  * @swagger
  * /api/uploads/review-photo:
  *   post:
- *     summary: Upload a single review photo (image) to Cloudinary
+ *     summary: Upload a single review photo (image) to Cloudflare R2
  *     tags: [Uploads]
  *     security:
  *       - bearerAuth: []
@@ -82,16 +84,18 @@ router.post(
                 });
             }
 
-            const result = await uploadToCloudinary(req.file.buffer, {
-                folder: 'sports-nest/reviews'
+            const result = await uploadToR2(req.file.buffer, {
+                folder: 'sports-nest/reviews',
+                filename: req.file.originalname,
+                contentType: req.file.mimetype,
             });
 
             res.status(201).json({
                 success: true,
                 message: 'Photo uploaded successfully',
                 data: {
-                    url: result.secure_url,
-                    publicId: result.public_id,
+                    url: result.url,
+                    publicId: result.key,
                     filename: req.file.originalname
                 }
             });

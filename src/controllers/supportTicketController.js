@@ -1,16 +1,20 @@
 const SupportTicket = require('../models/SupportTicket');
 const { validationResult } = require('express-validator');
 const auditLog = require('../utils/auditLog');
-const { uploadToCloudinary } = require('../utils/cloudinary');
+const { uploadToR2 } = require('../utils/r2');
 
 async function uploadAttachmentFiles(files) {
     if (!files || files.length === 0) return [];
     const uploaded = await Promise.all(
-        files.map((file) => uploadToCloudinary(file.buffer, { folder: 'sports-nest/support-tickets' }))
+        files.map((file) => uploadToR2(file.buffer, {
+            folder: 'sports-nest/support-tickets',
+            filename: file.originalname,
+            contentType: file.mimetype,
+        }))
     );
     return uploaded.map((result, i) => ({
-        url: result.secure_url,
-        publicId: result.public_id,
+        url: result.url,
+        publicId: result.key,
         filename: files[i].originalname,
     }));
 }

@@ -7,7 +7,7 @@ const Review = require('../models/Review.js');
 const SupportTicket = require('../models/SupportTicket.js');
 const JWTUtils = require('../utils/jwt.js');
 const EmailService = require('../utils/email.js');
-const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary.js');
+const { uploadToR2, deleteFromR2 } = require('../utils/r2.js');
 const auditLog = require('../utils/auditLog.js');
 const Referral = require('../models/Referral.js');
 const { generateUniqueReferralCode } = require('../utils/referral.js');
@@ -720,20 +720,24 @@ class AuthController {
                 });
             }
 
-            const result = await uploadToCloudinary(req.file.buffer, { folder: 'sports-nest/avatars' });
+            const result = await uploadToR2(req.file.buffer, {
+                folder: 'sports-nest/avatars',
+                filename: req.file.originalname,
+                contentType: req.file.mimetype,
+            });
 
             const previousPublicId = req.user.profilePicture?.publicId;
             if (previousPublicId) {
                 try {
-                    await deleteFromCloudinary(previousPublicId);
-                } catch (cloudinaryError) {
-                    console.error('Failed to delete previous avatar:', cloudinaryError);
+                    await deleteFromR2(previousPublicId);
+                } catch (r2Error) {
+                    console.error('Failed to delete previous avatar from R2:', r2Error);
                 }
             }
 
             req.user.profilePicture = {
-                url: result.secure_url,
-                publicId: result.public_id,
+                url: result.url,
+                publicId: result.key,
             };
             await req.user.save();
 
@@ -862,9 +866,9 @@ class AuthController {
 
             if (user.profilePicture?.publicId) {
                 try {
-                    await deleteFromCloudinary(user.profilePicture.publicId);
-                } catch (cloudinaryError) {
-                    console.error('Failed to delete profile picture during account deletion:', cloudinaryError);
+                    await deleteFromR2(user.profilePicture.publicId);
+                } catch (r2Error) {
+                    console.error('Failed to delete profile picture from R2 during account deletion:', r2Error);
                 }
             }
 
