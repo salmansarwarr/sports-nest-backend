@@ -155,6 +155,11 @@ app.use(
     })
 );
 
+// Favicon handler (returns 204 No Content for browser icon requests)
+app.get("/favicon.ico", (req, res) => {
+    res.status(204).set("Cache-Control", "public, max-age=86400").end();
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
     res.status(200).json({
@@ -191,8 +196,8 @@ app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin/dashboard', adminDashboardRoutes);
 app.use('/api/owner/dashboard', ownerDashboardRoutes);
 
-// 404 handler
-app.use(/('*')/, (req, res) => {
+// 404 handler for all unhandled routes
+app.use((req, res) => {
     res.status(404).json({
         success: false,
         message: "Route not found",
